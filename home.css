@@ -94,10 +94,11 @@ body.theatre .theatre-only { display: inline-block; }
 body.bare .hero-controls, body.bare .live-note, body.bare .theatre-back { display: none; }
 body.bare .hero canvas { cursor: none; }
 .gallery figure.live { cursor: pointer; position: relative; }
-.gallery figure.live::after { content: "▶"; position: absolute; left: 50%; top: 0; transform: translate(-50%, 0); margin-top: calc(50% - 1.1rem);
-  width: 2.2rem; height: 2.2rem; line-height: 2.2rem; text-align: center; border-radius: 50%; color: #fff; background: rgba(13,11,16,.55);
-  opacity: 0; transition: opacity .2s; pointer-events: none; font-size: .95rem; }
-.gallery figure.live:hover::after, .gallery figure.live:focus-visible::after { opacity: 1; }
+.gallery figure.live img { transition: transform .25s ease, box-shadow .25s ease, filter .25s ease; }
+.gallery figure.live:hover img, .gallery figure.live:focus-visible img {
+  transform: translateY(-3px) scale(1.03); filter: brightness(1.12) saturate(1.1);
+  box-shadow: 0 0 0 2px rgba(224,173,116,.75), 0 8px 26px rgba(224,173,116,.28); }
+.gallery figure.live:focus-visible { outline: none; }
 
 @media (max-width: 520px) {
   body { font-size: 17px; }
