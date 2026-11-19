@@ -99,8 +99,17 @@ void main() {
   const FADE = 1.5;            // seconds to fade between fractals
   const KEEP_MAX = 0.9;        // the history's most weight: about the last ten frames
   const KEEP_DEEP = 0.75;      // ...and at the end of its depth
-  const CLIP = 1.25;           // variance clipping's reach (RESOLVE_FS)
-  const CLIP_DEEP = 0.9;       // ...and at the end of its depth
+  const CLIP = 2.0;            // variance clipping's reach (RESOLVE_FS) while it moves
+  const CLIP_DEEP = 1.25;      // ...and at the end of its depth
+  // Still (paused, or left alone after a touch): nothing new to show, so it keeps averaging, up to
+  // this many frames' worth, unclipped, and once settled stops drawing (the canvas keeps its picture).
+  // Still for STILL_HI frames, it also goes to the screen's full resolution (frame rate doesn't
+  // matter while nothing moves), so it keeps getting sharper the longer it's left.
+  const STILL_FRAMES = 128;
+  const STILL_HI = 15;
+  const STILL_DONE = 400;
+  // ...on a desktop (a mouse to hover with): a phone keeps its usual resolution, for its battery.
+  const HI_OK = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
   const PRECISION_MARGIN = 2;  // stop this many times short of where fp32 runs out
   const TAA = new URLSearchParams(location.search).get('taa') !== '0';   // ?taa=0: no blending, to compare
   // Render scale (CSS px a pixel, up to the screen's own) and samples a side, cheapest first.
@@ -122,7 +131,7 @@ void main() {
   let target = { x: 0, y: 0 }, aim = { x: 0, y: 0 }, vel = { x: 0, y: 0 };
   let startH = 1, minH = 1e-3, lastLook = 0, lastTouch = -1e9, steerT = 0;
   let fade = 0, fadeDir = 1, paused = false, leaving = false;
-  let frames = 0, jitterI = 0;
+  let frames = 0, jitterI = 0, still = 0, hi = false;
 
   const quad = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, quad);
@@ -231,7 +240,7 @@ void main() {
     view = { x: 0, y: 0, h: startH };
     target = { x: 0, y: 0 }; aim = { x: 0, y: 0 }; vel = { x: 0, y: 0 };
     lastLook = performance.now() / 1000 - RETARGET + 1.0; steerT = 0;
-    fade = 0; fadeDir = 1; leaving = false; frames = 0;
+    fade = 0; fadeDir = 1; leaving = false; frames = 0; still = 0; prevView = null;
     load(order[(at + 1) % order.length]).catch(() => {});   // the next one compiles meanwhile
   }
 
@@ -285,6 +294,7 @@ void main() {
   const steps = () => LADDER.filter(s => s[0] <= maxScale() + 1e-6);
   let step = 2, ceiling = 99, ceilingUntil = 0, ceilingFor = 15, frameTimes = [];
   function adapt(dt, now) {
+    if (hi) { frameTimes = []; return; }   // (slow frames at full resolution are fine while still)
     frameTimes.push(dt);
     if (frameTimes.length < 30) return;
     frameTimes.sort((a, b) => a - b);
@@ -299,7 +309,7 @@ void main() {
 
   function resize() {
     const r = canvas.getBoundingClientRect();
-    const s = steps()[step][0];
+    const s = hi ? Math.min(window.devicePixelRatio || 1, 2) : steps()[step][0];
     const w = Math.max(16, Math.round(r.width * s)), h = Math.max(16, Math.round(r.height * s));
     if (canvas.width === w && canvas.height === h && sampled) return;
     canvas.width = w; canvas.height = h;
@@ -314,7 +324,7 @@ void main() {
 
   function render() {
     const w = canvas.width, h = canvas.height;
-    jitterI = (jitterI % 16) + 1;
+    jitterI = (jitterI % 64) + 1;
     gl.bindFramebuffer(gl.FRAMEBUFFER, sampled.fb);
     drawFractal(w, h, view, steps()[step][1], halton(jitterI, 2) - 0.5, halton(jitterI, 3) - 0.5);
     const src = hist[histAt], dst = hist[1 - histAt];
@@ -330,8 +340,9 @@ void main() {
     // More careful the deeper it is (Dan: the blending fuzzed the detail zoomed in): less history,
     // clipped tighter, by how far through its depth it's got.
     const deep = Math.min(1, Math.max(0, Math.log(startH / view.h) / Math.log(startH / minH)));
-    gl.uniform1f(RU.uKeep, frames > 0 && TAA ? Math.min(1 - 1 / (frames + 1), KEEP_MAX - (KEEP_MAX - KEEP_DEEP) * deep) : 0);
-    gl.uniform1f(RU.uClip, CLIP - (CLIP - CLIP_DEEP) * deep);
+    const keepMax = still > 0 ? 1 - 1 / (floatHist ? STILL_FRAMES : 12) : KEEP_MAX - (KEEP_MAX - KEEP_DEEP) * deep;   // still: a plain running average
+    gl.uniform1f(RU.uKeep, frames > 0 && TAA ? Math.min(1 - 1 / (frames + 1), keepMax) : 0);
+    gl.uniform1f(RU.uClip, still > 0 ? 1e3 : CLIP - (CLIP - CLIP_DEEP) * deep);
     quadDraw(w, h);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.useProgram(show);
@@ -379,6 +390,10 @@ void main() {
     }
     fade = Math.min(1, Math.max(0, fade + fadeDir * dt / FADE));
     if (leaving && fade <= 0) { begin(at + 1); return; }
+    const pv = prevView;
+    still = pv && pv.x === view.x && pv.y === view.y && pv.h === view.h ? still + 1 : 0;
+    if (hi !== (HI_OK && still > STILL_HI)) { hi = !hi; resize(); }
+    if (still > STILL_HI + STILL_DONE && fade >= 1) return;
     render();
     if (poster && fade > 0.99) poster.classList.add('gone');
   }
