@@ -189,6 +189,7 @@ void main() {
   const timer = gl.getExtension('EXT_disjoint_timer_query_webgl2');
 
   let common = '';
+  let wanted = null;   // UILive.show's, before the list's loaded
   let order = [];
   let cur = null;          // { pick, prog, tex, uni }
   let at = 0;              // place in `order`
@@ -724,6 +725,13 @@ void main() {
 
   window.UILive = {
     next() { leaving = true; fadeDir = -1; lastTouch = -1e9; },
+    // Straight to that one (the gallery's full-tab view), from its start.
+    show(id) {
+      wanted = id;
+      if (!order.length) return;   // (still loading: it starts with it)
+      const i = order.findIndex(p => p.id === id);
+      if (i >= 0 && !(cur && cur.pick.id === id)) begin(i);
+    },
     // Play: off at once (no wait after a touch), up to speed in a second or so.
     togglePause() { paused = !paused; if (!paused) { steerT = 0; easeFor = 1.2; lastTouch = -1e9; } return paused; },
     state: () => ({ fade, leaving, step, scale: steps()[step][0], still, refining, refN, refMix, bands, bandMs, frameInt, refDuty, refScale: refScaleNow(), acc: acc && acc.w + 'x' + acc.h, frames, h: view.h, minH }),
@@ -740,7 +748,7 @@ void main() {
     order = picks.slice();
     for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
     // ?pick=<id or the start of its name>: start with that one.
-    const want = (new URLSearchParams(location.search).get('pick') || '').toLowerCase();
+    const want = (wanted || new URLSearchParams(location.search).get('pick') || '').toLowerCase();
     const first = want ? order.findIndex(p => p.id.startsWith(want) || p.name.toLowerCase().startsWith(want)) : -1;
     if (first > 0) order.unshift(...order.splice(first, 1));
     showName(order[0]);

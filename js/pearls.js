@@ -96,9 +96,24 @@ float stoneDist(vec2 rel, vec2 hs, float seed, out float r) {
     return (r - 1.0) * R * dirR;
 }
 
-vec3 pebble(int look, vec2 q, vec3 nn, float seed, float hover) {
+// Moss on top (as the app's pebbles): patches over the upper part, thicker towards the top edge.
+// rp: CSS px from the middle (y down), hs: half size in CSS px.
+float mossAt(vec2 rp, vec2 hs, float seed) {
+    // (In from the top edge a few px, ragged: rp.y + hs.y is how far below the top it is.)
+    float below = rp.y + hs.y * 0.92 + 3.0 * (vnoise(vec2(rp.x / 6.0, seed)) - 0.5);
+    float top = smoothstep(7.0, 0.0, below);
+    float patches = smoothstep(0.45, 0.7, 0.65 * vnoise(vec2(rp.x / 11.0 + seed * 9.0, seed * 3.0)) + 0.35 * vnoise(rp / 4.0 + seed));
+    return clamp(top * patches * 1.3, 0.0, 1.0);
+}
+vec3 mossColour(vec2 rp, float seed) {
+    return oklch(0.40 + 0.14 * vnoise(rp / 5.0), 0.09 + 0.05 * vnoise(rp / 20.0 + 3.0), 0.36 + 0.07 * vnoise(rp / 25.0 + seed))
+         * (0.7 + 0.6 * vnoise(rp / 1.1 + seed));
+}
+
+vec3 pebble(int look, vec2 q, vec3 nn, float seed, float hover, vec2 rp, vec2 hs) {
     float diff = max(dot(nn, L), 0.0);
-    float spec = pow(max(dot(reflect(-L, nn), vec3(0.0, 0.0, 1.0)), 0.0), 26.0 + 30.0 * hover);
+    // Matte, as beach stones are dry: a broad, faint sheen, a little more when wet (hovered).
+    float spec = pow(max(dot(reflect(-L, nn), vec3(0.0, 0.0, 1.0)), 0.0), 10.0 + 20.0 * hover);
     float fres = pow(1.0 - nn.z, 3.0);
     vec2 w = q * 3.0 + seed * 7.0;
     float grain = fbm(w * 2.0), speck = vnoise(q * 40.0 + seed);
@@ -127,7 +142,9 @@ vec3 pebble(int look, vec2 q, vec3 nn, float seed, float hover) {
     }
     // Wet when hovered: darker, more saturated, glossier.
     base *= mix(1.0, 0.82, hover);
-    return base * (0.42 + 0.7 * diff) + env(nn) * 0.25 + spec * (0.35 + 0.6 * hover) + fres * 0.15 * env(nn);
+    float moss = mossAt(rp, hs, seed);
+    base = mix(base, mossColour(rp, seed), moss);
+    return base * (0.45 + 0.65 * diff) + env(nn) * 0.15 + spec * (0.08 + 0.3 * hover) * (1.0 - moss) + fres * 0.06 * env(nn);
 }
 
 vec3 pearl(int look, vec2 q, vec3 nn, float seed, float hover) {
@@ -203,7 +220,7 @@ void main() {
         if (i >= uCount) break;
         vec4 rc = uRect[i], k = uKind[i];
         vec2 rel = p - rc.xy;
-        float marg = 12.0 * uDpr;
+        float marg = 14.0 * uDpr;   // (room for the shadow and the grass)
         if (abs(rel.x) > rc.z + marg || abs(rel.y) > rc.w + marg) continue;
         int kind = int(k.x + 0.5), look = int(k.y + 0.5);
         float seed = k.z, hover = k.w;
@@ -234,13 +251,33 @@ void main() {
         float body = 1.0 - smoothstep(-aa, aa * 0.5, d);
         float shadow = 0.5 * (1.0 - smoothstep(-2.0 * uDpr, 8.0 * uDpr, sd));
         vec3 col = vec3(0.0);
-        if (body > 0.0) col = kind == 0 ? pebble(look, q, nn, seed, hover)
+        if (body > 0.0) col = kind == 0 ? pebble(look, q, nn, seed, hover, rel / uDpr, rc.zw / uDpr)
             : look == 19 ? mix(pearl(11, q, nn, seed, hover) * 1.15, pearl(10, q, nn, seed, hover) * 1.08, uMore[i].x)
             : pearl(look, q, nn, seed, hover);
         // Shadow under, then the stone over it.
         vec4 s = vec4(0.0, 0.0, 0.0, shadow * (1.0 - body));
         vec4 b = vec4(col * body, body);
         vec4 item = b + s * (1.0 - b.a);
+        if (kind == 0) {
+            // Grass: short blades standing up from the mossy top edge, in tufts, leaning a little,
+            // each its own height and green, darker at the root.
+            vec2 rp = rel / uDpr, hs = rc.zw / uDpr;
+            float dd = d / uDpr;   // CSS px out from the edge
+            if (rp.y < -0.35 * hs.y && dd > -1.0 && dd < 9.0) {
+                const float BW = 2.4;   // CSS px a blade
+                float ci = floor(rp.x / BW), f = rp.x / BW - ci - 0.5;
+                float tuft = smoothstep(0.42, 0.7, vnoise(vec2(rp.x / 11.0 + seed * 9.0, seed * 3.0)));
+                float hgt = (2.0 + 6.0 * hash(vec2(ci, seed))) * tuft * smoothstep(-0.35, -0.75, rp.y / hs.y);
+                float t = clamp(dd / max(hgt, 1e-3), 0.0, 1.0);
+                float lean = (hash(vec2(ci, seed + 5.0)) - 0.5) * 1.4;
+                float half_ = 0.32 * (1.0 - t) + 0.04;
+                float blade = (1.0 - smoothstep(half_ - 0.12, half_ + 0.12, abs(f - lean * t))) * step(dd, hgt) * step(0.5, hgt);
+                blade *= smoothstep(-1.0, 0.5, dd);
+                vec3 g = oklch(0.32 + 0.3 * t + 0.08 * hash(vec2(ci, seed + 2.0)), 0.1 + 0.03 * t, 0.36 + 0.06 * hash(vec2(ci, seed + 7.0)));
+                vec4 gr = vec4(g * blade, blade);
+                item = gr + item * (1.0 - gr.a);
+            }
+        }
         acc = acc + item * (1.0 - acc.a);
     }
     frag = acc;

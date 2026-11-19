@@ -24,9 +24,11 @@
     <h1><span class="ultra">Ultra</span>Iterator</h1>
     <p class="tagline">Ultra Fractal artwork by Dan Wills, on your phone, moving to music.</p>
   </div>
+  <button class="gem pebble-link small theatre-only theatre-back" data-gem="pebble" data-look="grey" data-seed="7.7" onclick="history.back()" title="Back to the page (Esc)" aria-label="Back to the page">← Back</button>
   <div class="hero-controls">
     <button class="gem" data-gem="pearl" data-look="black" data-seed="3.1" onclick="window.UILive && UILive.next()" title="Next fractal" aria-label="Next fractal"><span class="glyph">↻</span></button>
     <button id="pause-pearl" class="gem" data-gem="pearl" data-look="state" data-seed="5.7" onclick="if (window.UILive) this.querySelector('.glyph').textContent = UILive.togglePause() ? '▶' : '❚❚'" title="Pause the dive" aria-label="Pause"><span class="glyph">❚❚</span></button>
+    <button class="gem theatre-only" data-gem="pebble" data-look="basalt" data-seed="5.1" onclick="UITheatre.bare()" title="Just the fractal (Esc, Enter or a tap brings these back)" aria-label="Hide the controls"><span class="glyph">✕</span></button>
   </div>
   <p class="live-note">Your browser is drawing this live from the fractal's Ultra Fractal parameters, with no pictures downloaded. Drag to look around; pinch, or Ctrl and scroll, to zoom.<br><span id="live-name"></span></p>
 </header>
@@ -76,6 +78,8 @@
   </div>
   <p>I'd love more testers. If you have an Android phone, email me the address of the Google account you use on Play, and I'll send you a link to install the Demo or the full app, free while it's in testing.</p>
   <p class="cta"><a class="gem pebble-link" data-gem="pebble" data-look="grey" data-seed="2.2" href="mailto:gdanzo@gmail.com?subject=UltraIterator%20tester&amp;body=Hi%20Dan%2C%0A%0AI'd%20like%20to%20test%20UltraIterator.%0A%0AMy%20Google%20Play%20account%20email%3A%20%0AMy%20phone%3A%20%0A">Become a tester</a></p>
+  <p class="email-line">Or write to <span class="email" id="email">gdanzo@gmail.com</span>
+    <button class="gem pebble-link small" data-gem="pebble" data-look="sandstone" data-seed="3.9" id="copy-email" type="button">Copy</button></p>
 </section>
 
 <section class="links-section">
@@ -102,5 +106,15 @@
 <script src="js/gallery.js"></script>
 <script src="js/live.js"></script>
 <script src="js/pearls.js"></script>
+<script src="js/theatre.js"></script>
+<script>
+// The email's Copy pebble (the mailto link does nothing where no mail program is set up).
+document.getElementById('copy-email').addEventListener('click', async e => {
+  const b = e.currentTarget, addr = document.getElementById('email').textContent;
+  try { await navigator.clipboard.writeText(addr); b.textContent = 'Copied'; }
+  catch (err) { const r = document.createRange(); r.selectNodeContents(document.getElementById('email')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); b.textContent = 'Selected'; }
+  setTimeout(() => { b.textContent = 'Copy'; }, 2000);
+});
+</script>
 </body>
 </html>

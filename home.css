@@ -72,12 +72,29 @@ body:not(.gems) .badge { border-radius: 50%; background: radial-gradient(circle 
 body:not(.gems) .pebble-link { background: #8d877f; border-radius: 40%; }
 body:not(.gems) .pebble-link.dark { background: #2c2a2e; }
 .cta { margin-top: 1rem; }
+.email-line { color: var(--muted); }
+.email { color: var(--fg); user-select: all; font-weight: 500; }
+.email-line .pebble-link { margin-left: .4rem; border: 0; background: transparent; cursor: pointer; font-family: inherit; }
 
 .links { display: flex; flex-wrap: wrap; gap: .4rem .2rem; }
 .links .pebble-link span.sub { display: block; font-size: .78rem; opacity: .75; }
 
 footer { max-width: 46rem; margin: 4rem auto 0; padding: 1.5rem 1rem 3rem; border-top: 1px solid var(--rule); }
 footer nav { display: flex; flex-wrap: wrap; gap: .3rem; margin-bottom: .8rem; }
+
+/* The full-tab view (js/theatre.js): the hero alone, filling the tab; bare: the fractal alone. */
+.theatre-only { display: none; }
+body.theatre main, body.theatre footer, body.theatre .hero-text { display: none; }
+body.theatre .hero { height: 100vh; height: 100svh; }
+body.theatre .theatre-only { display: inline-block; }
+.theatre-back { position: absolute; left: 1rem; top: 1rem; z-index: 6; border: 0; background: transparent; cursor: pointer; font-family: inherit; }
+body.bare .hero-controls, body.bare .live-note, body.bare .theatre-back { display: none; }
+body.bare .hero canvas { cursor: none; }
+.gallery figure.live { cursor: pointer; position: relative; }
+.gallery figure.live::after { content: "▶"; position: absolute; left: 50%; top: 0; transform: translate(-50%, 0); margin-top: calc(50% - 1.1rem);
+  width: 2.2rem; height: 2.2rem; line-height: 2.2rem; text-align: center; border-radius: 50%; color: #fff; background: rgba(13,11,16,.55);
+  opacity: 0; transition: opacity .2s; pointer-events: none; font-size: .95rem; }
+.gallery figure.live:hover::after, .gallery figure.live:focus-visible::after { opacity: 1; }
 
 @media (max-width: 520px) {
   body { font-size: 17px; }
