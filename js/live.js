@@ -296,7 +296,6 @@ void main() {
   function showName(pick) {
     if (info) info.textContent = pick.name.replace(/_dotdotdot_/g, ' … ').replace(/_/g, ' ');
     if (poster) poster.style.backgroundImage = 'url(live/' + pick.id + '.webp)';
-    moonColours(pick.id);
   }
 
   async function begin(i) {
@@ -622,45 +621,6 @@ void main() {
       pausePearl.setAttribute('aria-label', label);
       pausePearl.title = mode === 'paused' ? 'Carry on the dive' : mode === 'half' ? 'Keep it paused (it carries on by itself soon)' : 'Pause the dive';
     }
-  }
-
-  // The moon's colours, from the fractal's own picture: its most vivid colour, and a second of a
-  // different hue (else a paler one), both lifted so they show against the dark (OKLab).
-  function moonColours(id) {
-    if (!pausePearl) return;
-    const img = new Image();
-    img.onload = () => {
-      const N = 32, c = document.createElement('canvas'); c.width = c.height = N;
-      const g = c.getContext('2d', { willReadFrequently: true });
-      g.drawImage(img, 0, 0, N, N);
-      let px;
-      try { px = g.getImageData(0, 0, N, N).data; } catch (e) { return; }
-      const lin = v => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
-      const enc = v => { v = Math.min(1, Math.max(0, v)); return v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055; };
-      const toLab = (r, g, b) => {
-        const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b), m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b), s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
-        return [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s, 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s];
-      };
-      const toRgb = ([L, a, b]) => {
-        const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3, m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3, s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
-        return [enc(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s), enc(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s), enc(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s)];
-      };
-      const labs = [];
-      for (let i = 0; i < px.length; i += 4) labs.push(toLab(lin(px[i]), lin(px[i + 1]), lin(px[i + 2])));
-      const chroma = p => Math.hypot(p[1], p[2]), hue = p => Math.atan2(p[2], p[1]);
-      const score = p => chroma(p) * (0.3 + p[0]);
-      let A = labs[0];
-      for (const p of labs) if (score(p) > score(A)) A = p;
-      let B = null;
-      for (const p of labs) {
-        const dh = Math.abs(((hue(p) - hue(A) + 3 * Math.PI) % (2 * Math.PI)) - Math.PI);
-        if (dh > 1.0 && chroma(p) > 0.03 && (!B || score(p) > score(B))) B = p;
-      }
-      const lift = (p, L) => [Math.max(p[0], L), p[1], p[2]];
-      if (!B) B = [Math.min(0.95, A[0] + 0.2), A[1] * 0.5, A[2] * 0.5];
-      pausePearl._moon = [toRgb(lift(A, 0.72)), toRgb(lift(B, 0.82))];
-    };
-    img.src = 'live/' + id + '.webp';
   }
 
   let visible = true;
