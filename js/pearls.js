@@ -25,6 +25,7 @@ uniform float uDpr;
 uniform int uCount;
 uniform vec4 uRect[${MAX}];   // middle and half size, px, y down
 uniform vec4 uKind[${MAX}];   // kind (0 pebble, 1 pearl), look, seed, hover 0..1
+uniform vec4 uMoonA[${MAX}], uMoonB[${MAX}];   // the state pearl's moon: its body and its lit side
 uniform vec4 uMore[${MAX}];   // the state pearl's x: glow, y: countdown left 0..1 (<0 none), z: its call glow
 out vec4 frag;
 
@@ -289,12 +290,15 @@ void main() {
             if (moonA > 0.0) {
                 // The refining moon: a tiny pale circle orbiting just outside the rim.
                 float R = min(rc.z, rc.w), ang = m.w - floor(m.w / 10.0) * 10.0 - 1.5707963;
-                vec2 mp = vec2(cos(ang), sin(ang)) * (R + 5.0 * uDpr);
-                float md = length(rel - mp) - 2.2 * uDpr;
-                float sh = (1.0 - smoothstep(-1.0 * uDpr, 3.0 * uDpr, length(rel - mp - vec2(0.6, 1.2) * uDpr) - 2.2 * uDpr)) * 0.6 * moonA;
+                vec2 mp = vec2(cos(ang), sin(ang)) * (R + 5.5 * uDpr);
+                float md = length(rel - mp) - 2.8 * uDpr;
+                float sh = (1.0 - smoothstep(-1.0 * uDpr, 3.0 * uDpr, length(rel - mp - vec2(0.6, 1.2) * uDpr) - 2.8 * uDpr)) * 0.6 * moonA;
                 float mo = (1.0 - smoothstep(-0.7 * uDpr, 0.7 * uDpr, md)) * moonA;
+                // Coloured from the fractal: its vivid colour, the second lighting its upper left.
+                vec2 mq = (rel - mp) / (2.8 * uDpr);
+                vec3 mc = mix(uMoonA[i].rgb, uMoonB[i].rgb, smoothstep(0.6, -0.9, mq.x + mq.y));
                 item = vec4(0.0, 0.0, 0.0, sh) * (1.0 - item.a) + item;
-                item = vec4(vec3(1.0, 0.97, 0.9) * mo, mo) + item * (1.0 - mo);
+                item = vec4(mc * mo, mo) + item * (1.0 - mo);
             }
             if (m.y >= 0.0 && body > 0.0) {
                 vec3 ink = mix(vec3(1.0), vec3(0.08, 0.07, 0.1), smoothstep(0.45, 0.75, max(m.x, call)));
@@ -371,13 +375,13 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
   if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { document.body.classList.add('no-gems'); canvas.remove(); return; }
   document.body.classList.add('gems');
   const U = {};
-  for (const n of ['uRes', 'uTime', 'uDpr', 'uCount', 'uRect', 'uKind', 'uMore']) U[n] = gl.getUniformLocation(prog, n);
+  for (const n of ['uRes', 'uTime', 'uDpr', 'uCount', 'uRect', 'uKind', 'uMore', 'uMoonA', 'uMoonB']) U[n] = gl.getUniformLocation(prog, n);
   const buf = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, buf);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
 
   const hover = new WeakMap();
-  const rects = new Float32Array(MAX * 4), kinds = new Float32Array(MAX * 4), more = new Float32Array(MAX * 4);
+  const rects = new Float32Array(MAX * 4), kinds = new Float32Array(MAX * 4), more = new Float32Array(MAX * 4), moonA = new Float32Array(MAX * 4), moonB = new Float32Array(MAX * 4);
   let els = [];
   function collect() { els = [...document.querySelectorAll('.gem')]; }
   collect();
@@ -416,7 +420,9 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
       el._orbitA = (el._orbitA || 0) + ((orb ? orb.show : 0) - (el._orbitA || 0)) * (1 - Math.exp(-dt * 4));
       if (orb) el._ang = ((el._ang || 0) + orb.speed * dt) % (2 * Math.PI);
       if (kind === 0) more.set([parseFloat(el.dataset.rocky || 0), 0, 0, parseFloat(el.dataset.moss || 1)], n * 4);
-      else more.set([el._glowShown, el._count ?? -1, el._callShown, Math.floor(el._orbitA * 99) * 10 + (el._ang || 0)], n * 4);
+      if (el._moon) { moonA.set([...el._moon[0], 1], n * 4); moonB.set([...el._moon[1], 1], n * 4); }
+      else { moonA.set([1, 0.97, 0.9, 1], n * 4); moonB.set([1, 1, 1, 1], n * 4); }
+      if (kind !== 0) more.set([el._glowShown, el._count ?? -1, el._callShown, Math.floor(el._orbitA * 99) * 10 + (el._ang || 0)], n * 4);
       n++;
     }
     gl.viewport(0, 0, W, H);
@@ -431,6 +437,8 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
     gl.uniform4fv(U.uRect, rects);
     gl.uniform4fv(U.uKind, kinds);
     gl.uniform4fv(U.uMore, more);
+    gl.uniform4fv(U.uMoonA, moonA);
+    gl.uniform4fv(U.uMoonB, moonB);
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
