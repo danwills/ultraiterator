@@ -84,6 +84,7 @@ precision highp float;
 uniform sampler2D uTex;    // the moving view's blend, at its own size
 uniform sampler2D uAcc;    // the refinement: colour sums, and their count in alpha
 uniform float uFade, uRefMix;
+uniform float uSeed;       // the moving view's picture counts as this many samples in the refinement
 uniform vec2 uRes, uAccRes;
 uniform vec3 uView, uRefView;
 out vec4 frag;
@@ -95,7 +96,9 @@ void main() {
         vec2 pf = (o - uRefView.xy) * (uAccRes.y / uRefView.z) + 0.5 * uAccRes;
         if (all(greaterThanEqual(pf, vec2(0.0))) && all(lessThan(pf, uAccRes))) {
             vec4 a = texelFetch(uAcc, ivec2(pf), 0);
-            if (a.a > 0.0) c = mix(c, a.rgb / a.a, uRefMix);
+            // From the first sample on: the moving view's picture, worth uSeed samples, and the
+            // refinement's, so it improves at once and smoothly takes over.
+            c = mix(c, (c * uSeed + a.rgb) / (uSeed + a.a), uRefMix);
         }
     }
     // A slight vignette: corners down to ~70%, the middle untouched.
@@ -161,7 +164,7 @@ void main() {
   const REF_UP_WAIT = 300;
   // Slower than this a frame even at the ladder's bottom: it gives up and shows the picture.
   const TOO_SLOW = 0.3;
-  const REF_IN = [4, 24];      // samples over which it fades in from the moving view's blend
+  const REF_SEED = 6;          // the moving view's picture's worth, in samples, as refinement begins (SHOW_FS)
   const REF_OUT = 0.5;         // seconds to fade back out once the view moves
   // Without float blending: a plain running average in the moving view's blend instead, this long.
   const STILL_FRAMES = 128;
@@ -250,7 +253,7 @@ void main() {
   const resolve = link(RESOLVE_FS).p, show = link(SHOW_FS).p, bake = link(BAKE_FS).p;
   const BU = uniforms(bake, ['uAcc', 'uRes', 'uAccRes']);
   const RU = uniforms(resolve, ['uCur', 'uHist', 'uRes', 'uView', 'uPrev', 'uKeep', 'uClip']);
-  const SU = uniforms(show, ['uTex', 'uAcc', 'uFade', 'uRefMix', 'uRes', 'uAccRes', 'uView', 'uRefView']);
+  const SU = uniforms(show, ['uTex', 'uAcc', 'uFade', 'uRefMix', 'uSeed', 'uRes', 'uAccRes', 'uView', 'uRefView']);
 
   // Its gradients: the PNG's top half, UF's rows (the bottom half is the same in linear light).
   async function gradient(id) {
@@ -367,6 +370,7 @@ void main() {
     if (frameTimes.length < 30 && !(span > 1 && frameTimes.length >= 5) && !(span > 3 && frameTimes.length >= 3)) return;
     frameTimes.sort((a, b) => a - b);
     const med = frameTimes[frameTimes.length >> 1];
+    baseFrame = med;   // (refinement's frame-rate watch compares against this)
     frameTimes = [];
     if (med > TOO_SLOW && step === 0) { giveUp(); return; }
     if (med > TOO_SLOW * 2) { step = 0; ceiling = 0; ceilingUntil = now + 600; return; }   // hopeless: straight to the bottom
@@ -428,6 +432,7 @@ void main() {
   try { const v = parseFloat(localStorage.getItem(REF_SCALE_KEY)); if (v > 0) refScale = v; } catch (e) {}
   const refScaleMax = () => HI_OK ? Math.min(window.devicePixelRatio || 1, 2) : steps()[step][0];
   const refScaleNow = () => Math.max(steps()[step][0], Math.min(refScaleMax(), refScale || 1e9));
+  let baseFrame = 1 / 60;   // the page's frame time while moving, refinement's yardstick
   let refComfort = 0, refUpAt = 0, refUpWait = REF_UP_WAIT, refWentUp = false;
   // The page's frame rate while refining, each second: too slow, less of the GPU, then a lower
   // resolution; comfortable for a good while, a higher one. (True: begun again at the new one.)
@@ -438,7 +443,8 @@ void main() {
     const med = refFps[refFps.length >> 1], span = now - refFpsAt;
     refFps = []; refFpsAt = now;
     const s = refScaleNow();
-    if (med <= 1 / REF_MIN_FPS) {
+    // Too slow is under REF_MIN_FPS, or (where moving was already slower) clearly slower than moving.
+    if (med <= Math.max(1 / REF_MIN_FPS, baseFrame * 1.3)) {
       if (med < 1 / REF_UP_FPS) refDuty = Math.min(REF_DUTY, refDuty * 1.15);
       refComfort = med < 1 / REF_UP_FPS && refDuty >= REF_DUTY - 1e-6 ? refComfort + span : 0;
       if (refComfort > REF_UP_AFTER && now > refUpAt && s < refScaleMax() - 1e-6) {
@@ -568,6 +574,7 @@ void main() {
     gl.uniform1i(SU.uTex, 0); gl.uniform1i(SU.uAcc, 1);
     gl.uniform1f(SU.uFade, fade * fade * (3 - 2 * fade));
     gl.uniform1f(SU.uRefMix, acc ? refMix : 0);
+    gl.uniform1f(SU.uSeed, REF_SEED);
     gl.uniform2f(SU.uRes, w, h);
     gl.uniform2f(SU.uAccRes, acc ? acc.w : 1, acc ? acc.h : 1);
     gl.uniform3f(SU.uView, view.x, view.y, view.h);
@@ -619,7 +626,7 @@ void main() {
     if (!wantRefine && refining) stopRefine();
     if (refining) {
       if (!refineTick(now, raw)) return;   // nothing new: the canvas keeps its picture
-      refMix = smooth(REF_IN[0], REF_IN[1], refN);
+      refMix = 1;
     } else {
       refMix = Math.max(0, refMix - dt / REF_OUT);
       renderTaa();
