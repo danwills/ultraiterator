@@ -396,7 +396,7 @@ void main() {
   // Zoom by f about a client point, which stays put.
   function zoomAbout(f, cx, cy) {
     const a = planeAt(cx, cy);
-    const h = Math.min(startH * 2, Math.max(minH, view.h * f));
+    const h = Math.min(1e6, Math.max(minH, view.h * f));   // out as far as you like (1e6: well short of fp32 trouble)
     view.x = a.x + (view.x - a.x) * h / view.h; view.y = a.y + (view.y - a.y) * h / view.h;
     view.h = h;
     touched();
