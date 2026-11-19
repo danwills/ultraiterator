@@ -72,8 +72,14 @@ void main() {
         }
         m1 /= 9.0; m2 /= 9.0;
         vec3 sd = sqrt(max(m2 - m1 * m1, 0.0));
-        h = clamp(h, m1 - uClip * sd, m1 + uClip * sd);
-        c = mix(c, h, uKeep);
+        // Moving fast, the history counts for less and is clipped closer (it smeared into
+        // streaks on quick pans and zooms), and pixels that came in past the edge only borrow
+        // the edge's history when they're within a pixel or two of it.
+        float speed = length(pf - f);   // this pixel's travel since last frame, in pixels
+        float outside = length(pf - clamp(pf, vec2(1.5), uRes - 1.5));
+        float clip = uClip / (1.0 + 0.12 * speed);
+        h = clamp(h, m1 - clip * sd, m1 + clip * sd);
+        c = mix(c, h, uKeep * exp(-outside / 2.5) / (1.0 + 0.08 * speed));
     }
     frag = vec4(c, 1.0);
 }`;
