@@ -4,16 +4,100 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>UltraIterator</title>
-<link rel="stylesheet" href="style.css">
+<meta name="description" content="An Android slideshow of Ultra Fractal artwork by Dan Wills: it moves to music, dives into each picture's zooms, and keeps drawing the fractals live past their renders.">
+<meta property="og:title" content="UltraIterator">
+<meta property="og:description" content="Ultra Fractal artwork by Dan Wills, moving to music, on your phone.">
+<meta property="og:image" content="https://danwills.github.io/ultraiterator/live/053cc2345be0.webp">
+<meta name="theme-color" content="#0d0b10">
+<link rel="icon" href="live/053cc2345be0.webp">
+<link rel="stylesheet" href="home.css">
 </head>
 <body>
+
+<header class="hero">
+  <div id="live-poster" class="poster"></div>
+  <canvas id="live" aria-label="A fractal drawn live by your browser"></canvas>
+  <div class="hero-text">
+    <h1>UltraIterator</h1>
+    <p class="tagline">Ultra Fractal artwork by Dan Wills, on your phone, moving to music.</p>
+  </div>
+  <div class="hero-controls">
+    <button class="gem" data-gem="pearl" data-look="black" data-seed="3.1" onclick="window.UILive && UILive.next()" title="Next fractal" aria-label="Next fractal"><span class="glyph">↻</span></button>
+    <button class="gem" data-gem="pearl" data-look="nacre" data-seed="5.7" onclick="if (window.UILive) this.querySelector('.glyph').textContent = UILive.togglePause() ? '▶' : '❚❚'" title="Pause the dive" aria-label="Pause"><span class="glyph">❚❚</span></button>
+  </div>
+  <p class="live-note">Your browser is drawing this live from the fractal's Ultra Fractal parameters, with no pictures downloaded. Drag to look around; pinch, or Ctrl and scroll, to zoom.<br><span id="live-name"></span></p>
+</header>
+
 <main>
-<h1>UltraIterator</h1>
-<p class="muted">An Android slideshow of Ultra Fractal artwork by Dan Wills, moving to music.</p>
-<p>About two thousand fractals, made over many years, drift past and dive into each other's zooms, in time with whatever's playing around you.</p>
-<p>It comes in two editions: <strong>UltraIterator</strong>, and <strong>UltraIterator Demo</strong>, a free taste with a hand-picked selection.</p>
-<hr>
-<p class="muted"><a href="privacy/">Privacy policy</a> · <a href="terms/">Terms of service</a> · <a href="mailto:gdanzo@gmail.com">gdanzo@gmail.com</a></p>
+
+<section class="intro">
+  <p class="lede">About two thousand fractals, made over many years, drift past and dive into each other's zooms, in time with whatever's playing around you.</p>
+</section>
+
+<section class="facets">
+  <h2>What it does</h2>
+  <ul class="gems">
+    <li><span class="gem bullet" data-gem="pearl" data-look="agate" data-seed="1.2"></span><div><h3>Motion</h3><p>Pictures drift, turn and dive into their own zooms. A whole chain of renders, each a close-up inside the last, plays as one long fall.</p></div></li>
+    <li><span class="gem bullet" data-gem="pearl" data-look="obsidian" data-seed="2.4"></span><div><h3>Sound</h3><p>It listens to what's playing, through the microphone or the phone's own audio, and moves with it. You can send any part of the sound to any control.</p></div></li>
+    <li><span class="gem bullet" data-gem="pearl" data-look="moonstone" data-seed="3.6"></span><div><h3>Light</h3><p>Colour grades, a halo lamp and glints, all worked out on the phone's GPU.</p></div></li>
+    <li><span class="gem bullet" data-gem="pearl" data-look="amethyst" data-seed="4.8"></span><div><h3>Strangeness</h3><p>Warps, a Cave and a Corridor to fly through, relief that turns a picture into a landscape, and a vine growing through it all.</p></div></li>
+    <li><span class="gem bullet" data-gem="pearl" data-look="opal" data-seed="6.0"></span><div><h3>Your touch</h3><p>Drag to steer and hold to pause. A menu of pebbles and pearls tunes everything, and your settings save as presets.</p></div></li>
+  </ul>
+</section>
+
+<section class="live-section">
+  <h2>Live fractals</h2>
+  <p>Each picture in the app is a render about two thousand pixels across, and zooming past it would normally show nothing more. But more than 2,500 of the fractals have been ported, formula by formula, from Ultra Fractal to GPU shaders, and each port has been checked against its render. So past the render, the phone keeps drawing the fractal itself, as deep as its numbers hold out.</p>
+  <p>The fractal at the top of this page is one of them, and your own browser is drawing it the same way.</p>
+</section>
+
+<section class="gallery-section">
+  <h2>Pictures</h2>
+  <div id="gallery" class="gallery"></div>
+</section>
+
+<section class="get">
+  <h2>Getting it</h2>
+  <p>UltraIterator is coming to Google Play for Android, and it's in testing for now. It comes in two editions:</p>
+  <div class="editions">
+    <div class="edition">
+      <span class="gem badge" data-gem="pearl" data-look="vanilla" data-seed="7.3"></span>
+      <h3>UltraIterator Demo</h3>
+      <p>Free, with a hand-picked tenth of the library.</p>
+    </div>
+    <div class="edition">
+      <span class="gem badge" data-gem="pearl" data-look="ruby" data-seed="8.9"></span>
+      <h3>UltraIterator</h3>
+      <p>The whole library, deep zooms into the 16k renders, and every feature.</p>
+    </div>
+  </div>
+  <p>I'd love more testers. If you have an Android phone, email me the address of the Google account you use on Play, and I'll send you a link to install the Demo or the full app, free while it's in testing.</p>
+  <p class="cta"><a class="gem pebble-link" data-gem="pebble" data-look="grey" data-seed="2.2" href="mailto:gdanzo@gmail.com?subject=UltraIterator%20tester&amp;body=Hi%20Dan%2C%0A%0AI'd%20like%20to%20test%20UltraIterator.%0A%0AMy%20Google%20Play%20account%20email%3A%20%0AMy%20phone%3A%20%0A">Become a tester</a></p>
+</section>
+
+<section class="links-section">
+  <h2>Links</h2>
+  <p>News about the app, the fractals themselves, and videos.</p>
+  <div class="links">
+    <a class="gem pebble-link dark" data-gem="pebble" data-look="jade" data-seed="1.9" href="BLOG_URL">The UltraIterator Blog</a>
+    <a class="gem pebble-link dark" data-gem="pebble" data-look="jasper" data-seed="3.3" href="FLICKR_URL">Flickr</a>
+    <a class="gem pebble-link dark" data-gem="pebble" data-look="basalt" data-seed="5.5" href="YOUTUBE_URL">YouTube</a>
+  </div>
+</section>
+
 </main>
+
+<footer>
+  <nav>
+    <a class="gem pebble-link small dark" data-gem="pebble" data-look="basalt" data-seed="4.4" href="privacy/">Privacy</a>
+    <a class="gem pebble-link small" data-gem="pebble" data-look="sandstone" data-seed="9.1" href="terms/">Terms</a>
+    <a class="gem pebble-link small dark" data-gem="pebble" data-look="lapis" data-seed="6.6" href="mailto:gdanzo@gmail.com">Email</a>
+  </nav>
+  <p class="muted">© Dan Wills. The fractals were made in <a href="https://www.ultrafractal.com/">Ultra Fractal</a>.</p>
+</footer>
+
+<script src="js/gallery.js"></script>
+<script src="js/live.js"></script>
+<script src="js/pearls.js"></script>
 </body>
 </html>
