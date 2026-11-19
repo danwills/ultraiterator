@@ -92,7 +92,6 @@ body.theatre .hero { height: 100vh; height: 100svh; }
 body.theatre .theatre-only { display: inline-block; }
 .theatre-back { position: absolute; left: 1rem; top: 1rem; z-index: 6; border: 0; background: transparent; cursor: pointer; font-family: inherit; }
 body.bare .hero-controls, body.bare .live-note, body.bare .theatre-back { display: none; }
-body.bare .hero canvas { cursor: none; }
 .gallery figure.live { cursor: pointer; position: relative; }
 .gallery figure.live img { transition: transform .25s ease, box-shadow .25s ease, filter .25s ease; }
 .gallery figure.live:hover img, .gallery figure.live:focus-visible img {
