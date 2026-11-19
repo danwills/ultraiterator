@@ -2,13 +2,13 @@
    them on a canvas over the page, under each .gem's own text). */
 :root {
   --bg: #0d0b10; --bg2: #15121a; --fg: #ece4d8; --muted: #a39686; --accent: #e0ad74; --rule: #2e2832;
-  --serif: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+  --sans: Figtree, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 * { box-sizing: border-box; }
 html { background: var(--bg); }
-body { margin: 0; background: var(--bg); color: var(--fg); font: 18px/1.65 var(--serif); }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 17px/1.65 var(--sans); }
 a { color: var(--accent); }
-h1, h2, h3 { font-weight: normal; }
+h1, h2, h3 { font-weight: 500; }
 h2 { font-size: 1.6rem; margin: 0 0 .8rem; color: var(--accent); letter-spacing: .01em; }
 h3 { font-size: 1.15rem; margin: 0 0 .15rem; }
 p { margin: .5rem 0; }
@@ -30,10 +30,11 @@ body.no-live .hero canvas { display: none; }
 body.no-live .poster { filter: none; transform: none; }
 .hero-text { position: absolute; left: 0; right: 0; bottom: 0; padding: 0 1rem 5.2rem; pointer-events: none;
   background: linear-gradient(to top, rgba(13,11,16,.85), rgba(13,11,16,0) 100%); padding-top: 6rem; }
-.hero-text h1 { font-size: clamp(2.6rem, 9vw, 5.5rem); margin: 0; line-height: 1; letter-spacing: .01em; text-shadow: 0 2px 18px rgba(0,0,0,.7); }
+.hero-text h1 { font-size: clamp(2.6rem, 9vw, 5.5rem); font-weight: 600; margin: 0; line-height: 1; letter-spacing: -.01em; text-shadow: 0 2px 18px rgba(0,0,0,.7); }
+.hero-text h1 .ultra { font-weight: 300; }   /* two weights, so the sans I reads as an I, not an l */
 .hero-text .tagline { margin: .4rem 0 0; font-size: clamp(1.05rem, 3vw, 1.35rem); color: #f4ead9; text-shadow: 0 1px 10px rgba(0,0,0,.9); max-width: 34rem; }
 .hero-controls { position: absolute; right: 1rem; top: 1rem; display: flex; gap: .7rem; z-index: 6; }
-.hero-controls button { width: 52px; height: 52px; border: 0; background: transparent; color: #fff; font-size: 20px; cursor: pointer; padding: 0; border-radius: 50%; }
+.hero-controls button { width: 52px; height: 52px; border: 0; background: transparent; color: #fff; font-size: 20px; font-family: inherit; cursor: pointer; padding: 0; border-radius: 50%; }
 .hero-controls button .glyph { text-shadow: 0 1px 4px rgba(0,0,0,.8); }
 .hero-controls button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 body:not(.gems) .hero-controls button { background: rgba(30,26,34,.75); }
@@ -43,7 +44,7 @@ body:not(.gems) .hero-controls button { background: rgba(30,26,34,.75); }
 /* The rest: a column, sections apart. */
 main { max-width: 46rem; margin: 0 auto; padding: 0 1rem; }
 section { padding: 3.2rem 0 0; }
-.lede { font-size: clamp(1.2rem, 3.4vw, 1.5rem); line-height: 1.55; }
+.lede { font-size: clamp(1.2rem, 3.4vw, 1.5rem); line-height: 1.55; font-weight: 300; }
 
 ul.gems { list-style: none; padding: 0; margin: 0; }
 ul.gems li { display: flex; gap: 1.1rem; align-items: flex-start; margin: 1.3rem 0; }
@@ -63,7 +64,7 @@ body:not(.gems) .bullet { border-radius: 50%; background: radial-gradient(circle
 body:not(.gems) .badge { border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fff8, #9a8a7a 40%, #302820); }
 
 /* Pebble buttons: the stone is drawn behind, the word on it. */
-.pebble-link { display: inline-block; padding: .85rem 1.7rem; color: #1b1712; text-decoration: none; font-size: 1.1rem; margin: .3rem .4rem .3rem 0; }
+.pebble-link { display: inline-block; padding: .85rem 1.7rem; color: #1b1712; text-decoration: none; font-size: 1.05rem; font-weight: 500; margin: .3rem .4rem .3rem 0; }
 .pebble-link.small { padding: .55rem 1.15rem; font-size: .95rem; }
 .pebble-link.dark { color: #efe6d8; }
 .pebble-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 6px; border-radius: 40%; }
