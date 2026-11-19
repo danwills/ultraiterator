@@ -608,7 +608,8 @@ void main() {
     // While it refines, a tiny moon circles the pearl: briskly over the first few dozen samples, where
     // the picture visibly improves, then hardly moving through the long tail (js/pearls.js integrates its angle).
     const working = refining || (!canRefine && still > 0 && still < STILL_FRAMES);
-    pausePearl._orbit = working ? { speed: ORBIT_SPEED / (1 + Math.pow(n / ORBIT_HALF, 2)), show: 1 - smooth(0.85, 1, prog) } : null;
+    const fresh = 1 / (1 + Math.pow(n / ORBIT_HALF, 2));
+    pausePearl._orbit = working ? { speed: ORBIT_SPEED * fresh, fresh, show: 1 - smooth(0.85, 1, prog) } : null;
     const left = IDLE_RESUME - (performance.now() / 1000 - lastTouch);
     const half = !paused && left > 0;
     pausePearl._count = half ? left / IDLE_RESUME : -1;

@@ -285,19 +285,22 @@ void main() {
                 float halo = lit * lit * (1.0 - body) * exp(-max(d, 0.0) / (4.5 * uDpr)) * smoothstep(13.0 * uDpr, 6.0 * uDpr, d) * 0.55;
                 item = vec4(vec3(0.93, 0.95, 1.0) * halo, halo) + item * (1.0 - halo);
             }
-            float moonA = floor(m.w / 10.0) / 99.0;
+            float moonF = floor(m.w / 1000.0) / 99.0, mw = m.w - floor(m.w / 1000.0) * 1000.0;
+            float moonA = floor(mw / 10.0) / 99.0;
             if (moonA > 0.0) {
                 // The refining moon: a tiny black pearl orbiting just outside the rim.
-                float R = min(rc.z, rc.w), ang = m.w - floor(m.w / 10.0) * 10.0 - 1.5707963;
+                float R = min(rc.z, rc.w), ang = mw - floor(mw / 10.0) * 10.0 - 1.5707963;
                 vec2 mp = vec2(cos(ang), sin(ang)) * (R + 5.5 * uDpr);
                 float md = length(rel - mp) - 2.8 * uDpr;
                 float sh = (1.0 - smoothstep(-1.0 * uDpr, 3.0 * uDpr, length(rel - mp - vec2(0.6, 1.2) * uDpr) - 2.8 * uDpr)) * 0.6 * moonA;
                 float mo = (1.0 - smoothstep(-0.7 * uDpr, 0.7 * uDpr, md)) * moonA;
-                // A tiny black pearl: dark, a peacock-green sheen round its rim, a highlight up left.
+                // A tiny pearl, pale while it's busy, darkening to a black pearl (a peacock-green
+                // sheen round its rim) as it slows, while the big one brightens; a highlight up left.
                 vec2 mq = (rel - mp) / (2.8 * uDpr);
                 float mr = clamp(length(mq), 0.0, 1.0);
-                vec3 mc = vec3(0.07, 0.075, 0.085) + vec3(0.06, 0.14, 0.12) * pow(mr, 2.0)
-                        + vec3(0.9) * smoothstep(0.55, 0.0, length(mq - vec2(-0.35, -0.4)));
+                vec3 dark = vec3(0.07, 0.075, 0.085) + vec3(0.06, 0.14, 0.12) * pow(mr, 2.0);
+                vec3 pale = vec3(0.88, 0.85, 0.88) - vec3(0.2, 0.22, 0.16) * pow(mr, 2.0);
+                vec3 mc = mix(dark, pale, moonF) + vec3(0.9) * smoothstep(0.55, 0.0, length(mq - vec2(-0.35, -0.4)));
                 item = vec4(0.0, 0.0, 0.0, sh) * (1.0 - item.a) + item;
                 item = vec4(mc * mo, mo) + item * (1.0 - mo);
             }
@@ -416,12 +419,14 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
       el._glowShown = (el._glowShown ?? (el._glow || 0)) + ((el._glow || 0) - (el._glowShown ?? 0)) * (1 - Math.exp(-dt * 3));
       el._callShown = (el._callShown || 0) + ((el._call || 0) - (el._callShown || 0)) * (1 - Math.exp(-dt * 6));
       // A pebble's: rockiness, -, -, moss; the state pearl's: glow, countdown, call glow, -.
-      // (and the state pearl's w: its orbiting moon, 10 × its alpha (eased) + its angle)
+      // (and the state pearl's w: its orbiting moon, 1000 × its freshness (1 at full speed, 0 stopped)
+      // + 10 × its alpha (eased) + its angle)
       const orb = el._orbit;
       el._orbitA = (el._orbitA || 0) + ((orb ? orb.show : 0) - (el._orbitA || 0)) * (1 - Math.exp(-dt * 4));
       if (orb) el._ang = ((el._ang || 0) + orb.speed * dt) % (2 * Math.PI);
+      el._freshShown = orb ? (el._freshShown ?? 1) + (orb.fresh - (el._freshShown ?? 1)) * (1 - Math.exp(-dt * 3)) : 1;
       if (kind === 0) more.set([parseFloat(el.dataset.rocky || 0), 0, 0, parseFloat(el.dataset.moss || 1)], n * 4);
-      if (kind !== 0) more.set([el._glowShown, el._count ?? -1, el._callShown, Math.floor(el._orbitA * 99) * 10 + (el._ang || 0)], n * 4);
+      if (kind !== 0) more.set([el._glowShown, el._count ?? -1, el._callShown, Math.floor(el._freshShown * 99) * 1000 + Math.floor(el._orbitA * 99) * 10 + (el._ang || 0)], n * 4);
       n++;
     }
     gl.viewport(0, 0, W, H);
