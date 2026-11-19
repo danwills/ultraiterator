@@ -126,14 +126,14 @@ void main() {
     frag = vec4(a.a > 0.0 ? a.rgb / a.a : vec3(0.0), 1.0);
 }`;
 
-  const ZOOM_RATE = 0.085;     // octaves a second
+  const ZOOM_RATE = 0.13;      // octaves a second (quicker since the rests show it sharp; was 0.085)
   const DRIFT_MAX = 0.045;     // the most it drifts sideways, in screen heights a second
   const RETARGET = 4.5;        // seconds between looks for detail
   const PROBE = 40;            // the look's size, px square
   const IDLE_RESUME = 9;       // seconds after a touch before it steers itself again
   // Rests: the dive eases to a stop now and then (after REST_EVERY s of moving) and holds still for
   // REST_HOLD s, so the refinement gets to show; the pause pearl counts it down as after a touch.
-  const REST_EVERY = [30, 55], REST_HOLD = 30, REST_SETTLE = 3, REST_RESUME = 3;
+  const REST_EVERY = [15, 30], REST_HOLD = 20, REST_SETTLE = 3, REST_RESUME = 3;
   const restIn = () => REST_EVERY[0] + Math.random() * (REST_EVERY[1] - REST_EVERY[0]);
   const FADE = 1.5;            // seconds to fade between fractals
   const KEEP_MAX = 0.9;        // the history's most weight: about the last ten frames
