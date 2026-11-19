@@ -40,6 +40,7 @@ uniform sampler2D uCur, uHist;
 uniform vec2 uRes;
 uniform vec3 uView, uPrev;
 uniform float uKeep;       // the history's weight (0: start afresh)
+uniform float uClip;       // how far (in the neighbourhood's spreads) history may stray from this frame
 out vec4 frag;
 vec3 catmullRom(vec2 p) {
     vec2 tc = floor(p - 0.5) + 0.5, f = p - tc;
@@ -58,7 +59,22 @@ void main() {
     vec2 pf = (o - uPrev.xy) * (uRes.y / uPrev.z) + 0.5 * uRes;
     // Pixels drifting in at an edge have no history of their own: they take the nearest edge's,
     // at most a pixel or so away, rather than showing one noisy sample (sparkles round the frame).
-    if (uKeep > 0.0) c = mix(c, clamp(catmullRom(clamp(pf, vec2(1.5), uRes - 1.5)), 0.0, 1.0), uKeep);
+    if (uKeep > 0.0) {
+        vec3 h = clamp(catmullRom(clamp(pf, vec2(1.5), uRes - 1.5)), 0.0, 1.0);
+        // Variance clipping: the history may only stray from this frame's 3x3 neighbourhood by a
+        // little more than its own spread. Noise (a wide spread) still averages away, but detail
+        // the history hasn't caught up with (zooming in shows new detail every frame) comes
+        // through rather than being fuzzed by older, coarser frames.
+        vec3 m1 = vec3(0.0), m2 = vec3(0.0);
+        for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+            vec3 s = texelFetch(uCur, clamp(ivec2(f) + ivec2(i, j), ivec2(0), ivec2(uRes) - 1), 0).rgb;
+            m1 += s; m2 += s * s;
+        }
+        m1 /= 9.0; m2 /= 9.0;
+        vec3 sd = sqrt(max(m2 - m1 * m1, 0.0));
+        h = clamp(h, m1 - uClip * sd, m1 + uClip * sd);
+        c = mix(c, h, uKeep);
+    }
     frag = vec4(c, 1.0);
 }`;
   const SHOW_FS = `#version 300 es
@@ -82,6 +98,11 @@ void main() {
   const IDLE_RESUME = 9;       // seconds after a touch before it steers itself again
   const FADE = 1.5;            // seconds to fade between fractals
   const KEEP_MAX = 0.9;        // the history's most weight: about the last ten frames
+  const KEEP_DEEP = 0.75;      // ...and at the end of its depth
+  const CLIP = 1.25;           // variance clipping's reach (RESOLVE_FS)
+  const CLIP_DEEP = 0.9;       // ...and at the end of its depth
+  const PRECISION_MARGIN = 2;  // stop this many times short of where fp32 runs out
+  const TAA = new URLSearchParams(location.search).get('taa') !== '0';   // ?taa=0: no blending, to compare
   // Render scale (CSS px a pixel, up to the screen's own) and samples a side, cheapest first.
   const LADDER = [[0.4, 1], [0.5, 1], [0.65, 1], [0.8, 1], [1, 1], [1.25, 1], [1.5, 1], [1.5, 2]];
 
@@ -153,7 +174,7 @@ void main() {
   }
   function uniforms(p, names) { const u = {}; for (const n of names) u[n] = gl.getUniformLocation(p, n); return u; }
   const resolve = link(RESOLVE_FS).p, show = link(SHOW_FS).p;
-  const RU = uniforms(resolve, ['uCur', 'uHist', 'uRes', 'uView', 'uPrev', 'uKeep']);
+  const RU = uniforms(resolve, ['uCur', 'uHist', 'uRes', 'uView', 'uPrev', 'uKeep', 'uClip']);
   const SU = uniforms(show, ['uTex', 'uFade', 'uRes']);
 
   // Its gradients: the PNG's top half, UF's rows (the bottom half is the same in linear light).
@@ -202,7 +223,11 @@ void main() {
     showName(pick);
     // The whole 2k to start with, then in until fp32 runs out (its depth past the 2k).
     startH = 1.0;
-    minH = startH / Math.min(pick.depth * 2048 / Math.max(canvas.height, 1), 4096);
+    // Its depth is how far past its 2k fp32 holds: a pixel no finer than 1/(2048 depth) of the
+    // picture's height. Taken at the screen's own pixels (not the render's, which can be coarser
+    // for a while), with a margin, since the sub-pixel samples go finer still.
+    const screenPx = canvas.getBoundingClientRect().height * Math.min(window.devicePixelRatio || 1, 2);
+    minH = Math.max(startH / 4096, screenPx * PRECISION_MARGIN / (2048 * pick.depth));
     view = { x: 0, y: 0, h: startH };
     target = { x: 0, y: 0 }; aim = { x: 0, y: 0 }; vel = { x: 0, y: 0 };
     lastLook = performance.now() / 1000 - RETARGET + 1.0; steerT = 0;
@@ -302,7 +327,11 @@ void main() {
     gl.uniform3f(RU.uView, view.x, view.y, view.h);
     const pv = prevView || view;
     gl.uniform3f(RU.uPrev, pv.x, pv.y, pv.h);
-    gl.uniform1f(RU.uKeep, frames > 0 ? Math.min(1 - 1 / (frames + 1), KEEP_MAX) : 0);
+    // More careful the deeper it is (Dan: the blending fuzzed the detail zoomed in): less history,
+    // clipped tighter, by how far through its depth it's got.
+    const deep = Math.min(1, Math.max(0, Math.log(startH / view.h) / Math.log(startH / minH)));
+    gl.uniform1f(RU.uKeep, frames > 0 && TAA ? Math.min(1 - 1 / (frames + 1), KEEP_MAX - (KEEP_MAX - KEEP_DEEP) * deep) : 0);
+    gl.uniform1f(RU.uClip, CLIP - (CLIP - CLIP_DEEP) * deep);
     quadDraw(w, h);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.useProgram(show);
@@ -444,6 +473,10 @@ void main() {
     ]);
     order = picks.slice();
     for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+    // ?pick=<id or the start of its name>: start with that one.
+    const want = (new URLSearchParams(location.search).get('pick') || '').toLowerCase();
+    const first = want ? order.findIndex(p => p.id.startsWith(want) || p.name.toLowerCase().startsWith(want)) : -1;
+    if (first > 0) order.unshift(...order.splice(first, 1));
     showName(order[0]);
     await begin(0);
     requestAnimationFrame(frame);
