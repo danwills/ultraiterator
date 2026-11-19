@@ -26,7 +26,7 @@
   </div>
   <div class="hero-controls">
     <button class="gem" data-gem="pearl" data-look="black" data-seed="3.1" onclick="window.UILive && UILive.next()" title="Next fractal" aria-label="Next fractal"><span class="glyph">↻</span></button>
-    <button class="gem" data-gem="pearl" data-look="nacre" data-seed="5.7" onclick="if (window.UILive) this.querySelector('.glyph').textContent = UILive.togglePause() ? '▶' : '❚❚'" title="Pause the dive" aria-label="Pause"><span class="glyph">❚❚</span></button>
+    <button id="pause-pearl" class="gem" data-gem="pearl" data-look="state" data-seed="5.7" onclick="if (window.UILive) this.querySelector('.glyph').textContent = UILive.togglePause() ? '▶' : '❚❚'" title="Pause the dive" aria-label="Pause"><span class="glyph">❚❚</span></button>
   </div>
   <p class="live-note">Your browser is drawing this live from the fractal's Ultra Fractal parameters, with no pictures downloaded. Drag to look around; pinch, or Ctrl and scroll, to zoom.<br><span id="live-name"></span></p>
 </header>

@@ -194,7 +194,7 @@ void main() {
   let at = 0;              // place in `order`
   let view = { x: 0, y: 0, h: 1 }, prevView = null;
   let target = { x: 0, y: 0 }, aim = { x: 0, y: 0 }, vel = { x: 0, y: 0 };
-  let startH = 1, minH = 1e-3, lastLook = 0, lastTouch = -1e9, steerT = 0;
+  let startH = 1, minH = 1e-3, lastLook = 0, lastTouch = -1e9, steerT = 0, easeFor = 4;   // (easeFor: s to reach full speed)
   let fade = 0, fadeDir = 1, paused = false, leaving = false;
   let frames = 0, jitterI = 0, still = 0;
   let refining = false, refN = 0, refMix = 0, refView = null, acc = null;
@@ -308,7 +308,7 @@ void main() {
     minH = Math.max(startH / 4096, screenPx * PRECISION_MARGIN / (2048 * pick.depth));
     view = { x: 0, y: 0, h: startH };
     target = { x: 0, y: 0 }; aim = { x: 0, y: 0 }; vel = { x: 0, y: 0 };
-    lastLook = performance.now() / 1000 - RETARGET + 1.0; steerT = 0;
+    lastLook = performance.now() / 1000 - RETARGET + 1.0; steerT = 0; easeFor = 4;
     fade = 0; fadeDir = 1; leaving = false; frames = 0; still = 0; prevView = null; stopRefine(); refMix = 0;
     load(order[(at + 1) % order.length]).catch(() => {});   // the next one compiles meanwhile
   }
@@ -583,6 +583,17 @@ void main() {
     quadDraw(w, h);
   }
 
+  // The pause pearl says which it's doing: dim, near the ↻ pearl's black, while it moves (drawing
+  // in real time), brightening to white nacre as a still view refines (by samples, on a log scale:
+  // the first few dozen show the most). Without refinement, by its still frames' averaging.
+  const pausePearl = document.getElementById('pause-pearl');
+  const GLOW_PLAY = 0.1, GLOW_FULL_AT = 1024;
+  function showState() {
+    if (!pausePearl) return;
+    const n = refining ? refN : !canRefine && still > 0 ? Math.min(still, STILL_FRAMES) * 2 : 0;
+    pausePearl._glow = GLOW_PLAY + (1 - GLOW_PLAY) * Math.min(1, Math.log2(1 + n) / Math.log2(1 + GLOW_FULL_AT));
+  }
+
   let visible = true;
   document.addEventListener('visibilitychange', () => { prev = performance.now() / 1000; frameTimes = []; });
   new IntersectionObserver(es => { visible = es[0].isIntersecting; }).observe(canvas);
@@ -594,13 +605,14 @@ void main() {
     const now = performance.now() / 1000;
     const raw = now - prev, dt = Math.min(raw, 0.1); prev = now;
     if (!cur || !visible || document.hidden) { frames = 0; return; }
+    showState();
     adapt(raw, now);   // (raw, uncapped: slow hardware must show as slow)
     if (!cur) return;
     resize();
     if (!paused && now - lastTouch > IDLE_RESUME) {
       // Ease in after a start or a touch, and out towards the end of its depth.
       steerT += dt;
-      const ease = smooth(0, 4, steerT) * (0.25 + 0.75 * smooth(minH, minH * 6, view.h));
+      const ease = smooth(0, easeFor, steerT) * (0.25 + 0.75 * smooth(minH, minH * 6, view.h));
       view.h *= Math.pow(2, -ZOOM_RATE * ease * dt);
       if (now - lastLook > RETARGET) { lastLook = now; look(); }
       // The aim glides to the target, and a critically damped spring follows the aim, so the
@@ -638,7 +650,7 @@ void main() {
   // After the hand: carry on from here, still.
   function touched() {
     lastTouch = performance.now() / 1000;
-    target = { x: view.x, y: view.y }; aim = { ...target }; vel = { x: 0, y: 0 }; steerT = 0;
+    target = { x: view.x, y: view.y }; aim = { ...target }; vel = { x: 0, y: 0 }; steerT = 0; easeFor = 4;
   }
   // The plane under a point on the canvas (client px).
   function planeAt(cx, cy) {
@@ -712,7 +724,8 @@ void main() {
 
   window.UILive = {
     next() { leaving = true; fadeDir = -1; lastTouch = -1e9; },
-    togglePause() { paused = !paused; if (!paused) steerT = 0; return paused; },
+    // Play: off at once (no wait after a touch), up to speed in a second or so.
+    togglePause() { paused = !paused; if (!paused) { steerT = 0; easeFor = 1.2; lastTouch = -1e9; } return paused; },
     state: () => ({ fade, leaving, step, scale: steps()[step][0], still, refining, refN, refMix, bands, bandMs, frameInt, refDuty, refScale: refScaleNow(), acc: acc && acc.w + 'x' + acc.h, frames, h: view.h, minH }),
   };
 

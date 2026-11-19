@@ -11,6 +11,9 @@
     grey: 0, jasper: 1, lapis: 2, basalt: 3, sandstone: 4, jade: 5,
     // pearls and gems
     nacre: 10, black: 11, ruby: 12, vanilla: 13, agate: 14, moonstone: 15, amethyst: 16, obsidian: 17, opal: 18,
+    // a black pearl brightening to white nacre by the element's `_glow` (0..1): the live hero's
+    // pause pearl, dim while it plays, brightening as a still view refines (js/live.js)
+    state: 19,
   };
 
   const FS = `#version 300 es
@@ -21,6 +24,7 @@ uniform float uDpr;
 uniform int uCount;
 uniform vec4 uRect[${MAX}];   // middle and half size, px, y down
 uniform vec4 uKind[${MAX}];   // kind (0 pebble, 1 pearl), look, seed, hover 0..1
+uniform vec4 uMore[${MAX}];   // x: the state pearl's glow
 out vec4 frag;
 
 const vec3 LUMA = vec3(0.299, 0.587, 0.114);
@@ -230,7 +234,9 @@ void main() {
         float body = 1.0 - smoothstep(-aa, aa * 0.5, d);
         float shadow = 0.5 * (1.0 - smoothstep(-2.0 * uDpr, 8.0 * uDpr, sd));
         vec3 col = vec3(0.0);
-        if (body > 0.0) col = kind == 0 ? pebble(look, q, nn, seed, hover) : pearl(look, q, nn, seed, hover);
+        if (body > 0.0) col = kind == 0 ? pebble(look, q, nn, seed, hover)
+            : look == 19 ? mix(pearl(11, q, nn, seed, hover) * 1.15, pearl(10, q, nn, seed, hover) * 1.08, uMore[i].x)
+            : pearl(look, q, nn, seed, hover);
         // Shadow under, then the stone over it.
         vec4 s = vec4(0.0, 0.0, 0.0, shadow * (1.0 - body));
         vec4 b = vec4(col * body, body);
@@ -263,13 +269,13 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
   if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { document.body.classList.add('no-gems'); canvas.remove(); return; }
   document.body.classList.add('gems');
   const U = {};
-  for (const n of ['uRes', 'uTime', 'uDpr', 'uCount', 'uRect', 'uKind']) U[n] = gl.getUniformLocation(prog, n);
+  for (const n of ['uRes', 'uTime', 'uDpr', 'uCount', 'uRect', 'uKind', 'uMore']) U[n] = gl.getUniformLocation(prog, n);
   const buf = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, buf);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
 
   const hover = new WeakMap();
-  const rects = new Float32Array(MAX * 4), kinds = new Float32Array(MAX * 4);
+  const rects = new Float32Array(MAX * 4), kinds = new Float32Array(MAX * 4), more = new Float32Array(MAX * 4);
   let els = [];
   function collect() { els = [...document.querySelectorAll('.gem')]; }
   collect();
@@ -299,6 +305,9 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
       hover.set(el, h);
       rects.set([(r.left + r.width / 2) * dpr, (r.top + r.height / 2) * dpr, r.width / 2 * dpr, r.height / 2 * dpr], n * 4);
       kinds.set([kind, look, seed, h], n * 4);
+      // (its glow eases, so steps in progress read as a smooth brightening)
+      el._glowShown = (el._glowShown ?? (el._glow || 0)) + ((el._glow || 0) - (el._glowShown ?? 0)) * (1 - Math.exp(-dt * 3));
+      more[n * 4] = el._glowShown;
       n++;
     }
     gl.viewport(0, 0, W, H);
@@ -312,6 +321,7 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
     gl.uniform1i(U.uCount, n);
     gl.uniform4fv(U.uRect, rects);
     gl.uniform4fv(U.uKind, kinds);
+    gl.uniform4fv(U.uMore, more);
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
