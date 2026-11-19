@@ -8,7 +8,8 @@
   const MAX = 24;
   const LOOKS = {
     // pebbles
-    grey: 0, jasper: 1, lapis: 2, basalt: 3, sandstone: 4, jade: 5,
+    grey: 0, jasper: 1, lapis: 2, basalt: 3, sandstone: 4, jade: 5, sky: 6,
+    // (a pebble's data-moss: how mossy, 1 usual; data-rocky: 0..1, a rougher, more chipped outline)
     // pearls and gems
     nacre: 10, black: 11, ruby: 12, vanilla: 13, agate: 14, moonstone: 15, amethyst: 16, obsidian: 17, opal: 18,
     // a black pearl brightening to white nacre by the element's `_glow` (0..1): the live hero's
@@ -72,7 +73,7 @@ const vec3 L = normalize(vec3(-0.5, -0.65, 0.75));
 
 // The beach stone's outline (the app's STONE): a superellipse wobbling a little, its own
 // posture, chipped. Returns the distance outside it, px; r: how far out from the middle.
-float stoneDist(vec2 rel, vec2 hs, float seed, out float r) {
+float stoneDist(vec2 rel, vec2 hs, float seed, float rocky, out float r) {
     float q1 = hash(vec2(seed, 21.0)), q2 = hash(vec2(seed, 22.0)), q3 = hash(vec2(seed, 23.0));
     float ta = (q1 - 0.5) * 0.12;
     rel = vec2(cos(ta) * rel.x + sin(ta) * rel.y, -sin(ta) * rel.x + cos(ta) * rel.y);
@@ -91,18 +92,22 @@ float stoneDist(vec2 rel, vec2 hs, float seed, out float r) {
     wob += 0.03 * (vnoise(ring * 2.2 + seed * 3.1) - 0.5) + 0.014 * (vnoise(ring * 6.5 + seed * 1.7) - 0.5);
     vec2 edge = rel / max(r, 0.05) / mn;
     float chip = abs(vnoise(edge * 1.3 + seed * 2.3) - 0.5) * 2.0;
-    float R = 1.0 + (wob - 0.08 * chip + 0.07) * mn / dirR;
+    // Rocky: deeper chips, and a fine broken edge.
+    wob += rocky * (0.05 * (vnoise(ring * 9.0 + seed * 4.1) - 0.5) + 0.025 * (vnoise(ring * 23.0 + seed) - 0.5));
+    float R = 1.0 + (wob - (0.08 + 0.1 * rocky) * chip + 0.07) * mn / dirR;
     r /= R;
     return (r - 1.0) * R * dirR;
 }
 
 // Moss on top (as the app's pebbles): patches over the upper part, thicker towards the top edge.
 // rp: CSS px from the middle (y down), hs: half size in CSS px.
-float mossAt(vec2 rp, vec2 hs, float seed) {
+float mossAt(vec2 rp, vec2 hs, float seed, float amt) {
     // (In from the top edge a few px, ragged: rp.y + hs.y is how far below the top it is.)
-    float below = rp.y + hs.y * 0.92 + 3.0 * (vnoise(vec2(rp.x / 6.0, seed)) - 0.5);
-    float top = smoothstep(7.0, 0.0, below);
-    float patches = smoothstep(0.45, 0.7, 0.65 * vnoise(vec2(rp.x / 11.0 + seed * 9.0, seed * 3.0)) + 0.35 * vnoise(rp / 4.0 + seed));
+    float below = rp.y + hs.y * 0.92 + 3.0 * amt * (vnoise(vec2(rp.x / 6.0, seed)) - 0.5);
+    float top = smoothstep(7.0 * amt, 0.0, below);
+    // (2D noise for the patches, so they don't run in stripes)
+    float patches = smoothstep(0.45 - 0.12 * (amt - 1.0), 0.7 - 0.1 * (amt - 1.0),
+        0.65 * vnoise(rp / 11.0 + seed * 9.0) + 0.35 * vnoise(rp.yx / 4.0 + seed));
     return clamp(top * patches * 1.3, 0.0, 1.0);
 }
 vec3 mossColour(vec2 rp, float seed) {
@@ -110,7 +115,7 @@ vec3 mossColour(vec2 rp, float seed) {
          * (0.7 + 0.6 * vnoise(rp / 1.1 + seed));
 }
 
-vec3 pebble(int look, vec2 q, vec3 nn, float seed, float hover, vec2 rp, vec2 hs) {
+vec3 pebble(int look, vec2 q, vec3 nn, float seed, float hover, vec2 rp, vec2 hs, float mossAmt) {
     float diff = max(dot(nn, L), 0.0);
     // Matte, as beach stones are dry: a broad, faint sheen, a little more when wet (hovered).
     float spec = pow(max(dot(reflect(-L, nn), vec3(0.0, 0.0, 1.0)), 0.0), 10.0 + 20.0 * hover);
@@ -136,13 +141,17 @@ vec3 pebble(int look, vec2 q, vec3 nn, float seed, float hover, vec2 rp, vec2 hs
     } else if (look == 5) {
         // Jade: green, milky, a little see-through.
         base = oklch(0.55 + 0.12 * fbm(w * 0.7), 0.1, 0.42);
+    } else if (look == 6) {
+        // Sky: a weathered blue-grey stone, mottled, with pale lichen-ish flecks.
+        base = oklch(0.66 + 0.08 * grain + 0.04 * (speck - 0.5), 0.045, 0.66 + 0.04 * grain);
+        base = mix(base, oklch(0.82, 0.02, 0.6), smoothstep(0.66, 0.8, fbm(w * 1.4 + 5.0)) * 0.5);
     } else {
         // Grey beach pebble, speckled.
         base = oklch(0.62 + 0.1 * grain + 0.06 * (speck - 0.5), 0.012, 0.2 + 0.1 * grain);
     }
     // Wet when hovered: darker, more saturated, glossier.
     base *= mix(1.0, 0.82, hover);
-    float moss = mossAt(rp, hs, seed);
+    float moss = mossAt(rp, hs, seed, mossAmt);
     base = mix(base, mossColour(rp, seed), moss);
     return base * (0.45 + 0.65 * diff) + env(nn) * 0.15 + spec * (0.08 + 0.3 * hover) * (1.0 - moss) + fres * 0.06 * env(nn);
 }
@@ -229,8 +238,8 @@ void main() {
         vec3 nn; vec2 q;
         if (kind == 0) {
             float r, r2;
-            d = stoneDist(rel, rc.zw, seed, r);
-            sd = stoneDist(rel - vec2(2.0, 4.0) * uDpr, rc.zw, seed, r2);
+            d = stoneDist(rel, rc.zw, seed, uMore[i].x, r);
+            sd = stoneDist(rel - vec2(2.0, 4.0) * uDpr, rc.zw, seed, uMore[i].x, r2);
             // A worn dome: flat on top, rounding off at the rim.
             float rr = clamp(r, 0.0, 1.0);
             vec2 dir = rel / max(length(rel), 1e-3);
@@ -251,7 +260,7 @@ void main() {
         float body = 1.0 - smoothstep(-aa, aa * 0.5, d);
         float shadow = 0.5 * (1.0 - smoothstep(-2.0 * uDpr, 8.0 * uDpr, sd));
         vec3 col = vec3(0.0);
-        if (body > 0.0) col = kind == 0 ? pebble(look, q, nn, seed, hover, rel / uDpr, rc.zw / uDpr)
+        if (body > 0.0) col = kind == 0 ? pebble(look, q, nn, seed, hover, rel / uDpr, rc.zw / uDpr, uMore[i].w)
             : look == 19 ? mix(pearl(11, q, nn, seed, hover) * 1.15, pearl(10, q, nn, seed, hover) * 1.08, uMore[i].x)
             : pearl(look, q, nn, seed, hover);
         // Shadow under, then the stone over it.
@@ -290,19 +299,31 @@ void main() {
             // each its own height and green, darker at the root.
             vec2 rp = rel / uDpr, hs = rc.zw / uDpr;
             float dd = d / uDpr;   // CSS px out from the edge
-            if (rp.y < -0.35 * hs.y && dd > -1.0 && dd < 9.0) {
-                const float BW = 2.4;   // CSS px a blade
-                float ci = floor(rp.x / BW), f = rp.x / BW - ci - 0.5;
-                float tuft = smoothstep(0.42, 0.7, vnoise(vec2(rp.x / 11.0 + seed * 9.0, seed * 3.0)));
-                float hgt = (2.0 + 6.0 * hash(vec2(ci, seed))) * tuft * smoothstep(-0.35, -0.75, rp.y / hs.y);
-                float t = clamp(dd / max(hgt, 1e-3), 0.0, 1.0);
-                float lean = (hash(vec2(ci, seed + 5.0)) - 0.5) * 1.4;
-                float half_ = 0.32 * (1.0 - t) + 0.04;
-                float blade = (1.0 - smoothstep(half_ - 0.12, half_ + 0.12, abs(f - lean * t))) * step(dd, hgt) * step(0.5, hgt);
-                blade *= smoothstep(-1.0, 0.5, dd);
-                vec3 g = oklch(0.32 + 0.3 * t + 0.08 * hash(vec2(ci, seed + 2.0)), 0.1 + 0.03 * t, 0.36 + 0.06 * hash(vec2(ci, seed + 7.0)));
-                vec4 gr = vec4(g * blade, blade);
-                item = gr + item * (1.0 - gr.a);
+            float mA = uMore[i].w;
+            if (rp.y < -0.35 * hs.y && dd > -1.0 && dd < 11.0) {
+                // Two layers of blades (a shorter, darker one behind), each blade placed a little
+                // off its slot, leaning with a slow "wind" shared by its neighbours plus its own,
+                // and curving over towards its tip, so they don't read as a comb of straight lines.
+                float tuft = smoothstep(0.42 - 0.2 * (mA - 1.0), 0.7 - 0.15 * (mA - 1.0), vnoise(vec2(rp.x / 11.0 + seed * 9.0, seed * 3.0)));
+                float wind = (vnoise(vec2(rp.x / 17.0 + seed * 5.0, 1.0)) - 0.5) * 1.6;
+                for (int Lr = 1; Lr >= 0; Lr--) {
+                    float BW = Lr == 0 ? 2.5 : 3.3;   // CSS px a blade slot
+                    float xx = rp.x + float(Lr) * 1.37;
+                    float ci = floor(xx / BW);
+                    float hs1 = hash(vec2(ci, seed + float(Lr) * 17.0));
+                    float f = xx / BW - ci - 0.5 - (hash(vec2(ci, seed + 9.0 + float(Lr))) - 0.5) * 0.6;
+                    float hgt = (2.0 + 6.5 * hs1) * (Lr == 0 ? 1.0 : 0.7) * (0.75 + 0.25 * mA) * tuft
+                              * smoothstep(-0.35, -0.75, rp.y / hs.y);
+                    float t = clamp(dd / max(hgt, 1e-3), 0.0, 1.0);
+                    float lean = wind + (hash(vec2(ci, seed + 5.0 + float(Lr))) - 0.5) * 1.2;
+                    float bend = (hash(vec2(ci, seed + 13.0 + float(Lr))) - 0.5) * 1.6;
+                    float half_ = 0.3 * (1.0 - t) + 0.04;
+                    float blade = (1.0 - smoothstep(half_ - 0.12, half_ + 0.12, abs(f - lean * t - bend * t * t))) * step(dd, hgt) * step(0.5, hgt);
+                    blade *= smoothstep(-1.0, 0.5, dd);
+                    vec3 g = oklch((Lr == 0 ? 0.32 : 0.26) + 0.3 * t + 0.08 * hash(vec2(ci, seed + 2.0)), 0.1 + 0.03 * t, 0.36 + 0.07 * hash(vec2(ci, seed + 7.0)));
+                    vec4 gr = vec4(g * blade, blade);
+                    item = gr + item * (1.0 - gr.a);
+                }
             }
         }
         acc = acc + item * (1.0 - acc.a);
@@ -371,10 +392,10 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
       kinds.set([kind, look, seed, h], n * 4);
       // (its glow eases, so steps in progress read as a smooth brightening)
       el._glowShown = (el._glowShown ?? (el._glow || 0)) + ((el._glow || 0) - (el._glowShown ?? 0)) * (1 - Math.exp(-dt * 3));
-      more[n * 4] = el._glowShown;
       el._callShown = (el._callShown || 0) + ((el._call || 0) - (el._callShown || 0)) * (1 - Math.exp(-dt * 6));
-      more[n * 4 + 1] = el._count ?? -1;
-      more[n * 4 + 2] = el._callShown;
+      // A pebble's: rockiness, -, -, moss; the state pearl's: glow, countdown, call glow, -.
+      if (kind === 0) more.set([parseFloat(el.dataset.rocky || 0), 0, 0, parseFloat(el.dataset.moss || 1)], n * 4);
+      else more.set([el._glowShown, el._count ?? -1, el._callShown, 0], n * 4);
       n++;
     }
     gl.viewport(0, 0, W, H);
