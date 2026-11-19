@@ -588,11 +588,28 @@ void main() {
   // in real time), brightening to white nacre as a still view refines (by samples, on a log scale:
   // the first few dozen show the most). Without refinement, by its still frames' averaging.
   const pausePearl = document.getElementById('pause-pearl');
-  const GLOW_PLAY = 0.1, GLOW_FULL_AT = 1024;
+  // After a touch it's half paused: the pearl shows hollow pause bars in a ring that runs down
+  // till the dive carries on (a tap on it pauses for good), and over the last CALL_LEAD s a warm
+  // glow grows over it, the reminder, till it takes the pearl and the dive starts again.
+  const GLOW_PLAY = 0.1, GLOW_FULL_AT = 1024, CALL_LEAD = 3;
+  const pauseGlyph = pausePearl && pausePearl.querySelector('.glyph');
+  let shownMode = '';
   function showState() {
     if (!pausePearl) return;
     const n = refining ? refN : !canRefine && still > 0 ? Math.min(still, STILL_FRAMES) * 2 : 0;
     pausePearl._glow = GLOW_PLAY + (1 - GLOW_PLAY) * Math.min(1, Math.log2(1 + n) / Math.log2(1 + GLOW_FULL_AT));
+    const left = IDLE_RESUME - (performance.now() / 1000 - lastTouch);
+    const half = !paused && left > 0;
+    pausePearl._count = half ? left / IDLE_RESUME : -1;
+    pausePearl._call = half ? smooth(CALL_LEAD, 0, left) : 0;
+    const mode = paused ? 'paused' : half ? 'half' : 'playing';
+    if (mode !== shownMode) {
+      shownMode = mode;
+      if (pauseGlyph) pauseGlyph.textContent = mode === 'paused' ? '▶' : mode === 'half' ? '' : '❚❚';
+      const label = mode === 'paused' ? 'Play' : mode === 'half' ? 'Keep it paused' : 'Pause';
+      pausePearl.setAttribute('aria-label', label);
+      pausePearl.title = mode === 'paused' ? 'Carry on the dive' : mode === 'half' ? 'Keep it paused (it carries on by itself soon)' : 'Pause the dive';
+    }
   }
 
   let visible = true;

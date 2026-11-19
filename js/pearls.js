@@ -24,7 +24,7 @@ uniform float uDpr;
 uniform int uCount;
 uniform vec4 uRect[${MAX}];   // middle and half size, px, y down
 uniform vec4 uKind[${MAX}];   // kind (0 pebble, 1 pearl), look, seed, hover 0..1
-uniform vec4 uMore[${MAX}];   // x: the state pearl's glow
+uniform vec4 uMore[${MAX}];   // the state pearl's x: glow, y: countdown left 0..1 (<0 none), z: its call glow
 out vec4 frag;
 
 const vec3 LUMA = vec3(0.299, 0.587, 0.114);
@@ -258,6 +258,33 @@ void main() {
         vec4 s = vec4(0.0, 0.0, 0.0, shadow * (1.0 - body));
         vec4 b = vec4(col * body, body);
         vec4 item = b + s * (1.0 - b.a);
+        if (look == 19) {
+            // Half paused: hollow pause bars in a ring that runs down, and the warm call glow
+            // growing over the last seconds (js/live.js showState).
+            vec4 m = uMore[i];
+            float px = 1.0 / min(rc.z, rc.w);   // one px in q
+            vec3 warm = vec3(1.0, 0.78, 0.48);
+            float call = m.z;
+            if (call > 0.0) {
+                item.rgb = mix(item.rgb, warm * body, call * 0.6);
+                float halo = call * (1.0 - body) * exp(-max(d, 0.0) / (5.0 * uDpr)) * smoothstep(13.0 * uDpr, 6.0 * uDpr, d) * 0.8;   // (gone by the margin)
+                item = vec4(warm * halo, halo) + item * (1.0 - halo);
+            }
+            if (m.y >= 0.0 && body > 0.0) {
+                vec3 ink = mix(vec3(1.0), vec3(0.08, 0.07, 0.1), smoothstep(0.45, 0.75, max(m.x, call)));
+                float w = 1.6 * px * uDpr;
+                // Hollow bars.
+                vec2 bq = vec2(abs(abs(q.x) - 0.2), abs(q.y));
+                vec2 bd = bq - vec2(0.085, 0.3);
+                float box = length(max(bd, 0.0)) + min(max(bd.x, bd.y), 0.0);
+                float bars = 1.0 - smoothstep(w * 0.5, w * 0.5 + px * uDpr, abs(box));
+                // The ring, running down clockwise from the top.
+                float fr = fract(atan(q.x, -q.y) / 6.2831853 + 1.0);
+                float ring = (1.0 - smoothstep(w * 0.6, w * 0.6 + px * uDpr, abs(length(q) - 0.74))) * step(fr, m.y);
+                float a = max(bars, ring) * body * 0.92;
+                item.rgb = mix(item.rgb, ink * item.a, a);
+            }
+        }
         if (kind == 0) {
             // Grass: short blades standing up from the mossy top edge, in tufts, leaning a little,
             // each its own height and green, darker at the root.
@@ -345,6 +372,9 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
       // (its glow eases, so steps in progress read as a smooth brightening)
       el._glowShown = (el._glowShown ?? (el._glow || 0)) + ((el._glow || 0) - (el._glowShown ?? 0)) * (1 - Math.exp(-dt * 3));
       more[n * 4] = el._glowShown;
+      el._callShown = (el._callShown || 0) + ((el._call || 0) - (el._callShown || 0)) * (1 - Math.exp(-dt * 6));
+      more[n * 4 + 1] = el._count ?? -1;
+      more[n * 4 + 2] = el._callShown;
       n++;
     }
     gl.viewport(0, 0, W, H);
