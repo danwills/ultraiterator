@@ -63,7 +63,7 @@
   <div id="gallery" class="gallery"></div>
 </section>
 
-<section class="get">
+<section class="get" id="get">
   <h2>Getting it</h2>
   <p>UltraIterator is coming to Google Play for Android, and it's in testing for now. It comes in two editions:</p>
   <div class="editions">
@@ -80,6 +80,8 @@
   </div>
   <p>I'd love more testers. If you have an Android phone, email me the address of the Google account you use on Play, and I'll send you a link to install the Demo or the full app, free while it's in testing.</p>
   <p class="cta"><a class="gem pebble-link" data-gem="pebble" data-look="grey" data-seed="2.2" href="mailto:gdanzo@gmail.com?subject=UltraIterator%20tester&amp;body=Hi%20Dan%2C%0A%0AI'd%20like%20to%20test%20UltraIterator.%0A%0AMy%20Google%20Play%20account%20email%3A%20%0AMy%20phone%3A%20%0A">Become a tester</a></p>
+  <p class="open-app">Already have it?
+    <a class="gem pebble-link small dark" data-gem="pebble" data-look="lapis" data-seed="8.3" href="intent://open#Intent;scheme=ultraiterator;S.browser_fallback_url=https%3A%2F%2Fdanwills.github.io%2Fultraiterator%2F%23get;end">Open UltraIterator</a></p>
   <p class="email-line">Or write to <span class="email" id="email">gdanzo@gmail.com</span>
     <button class="gem pebble-link small" data-gem="pebble" data-look="sandstone" data-seed="3.9" id="copy-email" type="button">Copy</button></p>
 </section>
@@ -109,6 +111,10 @@
 <script src="js/live.js"></script>
 <script src="js/pearls.js"></script>
 <script src="js/theatre.js"></script>
+<script>
+// The Open pebble only on Android (an intent: link, falling back to here if it isn't installed).
+if (/Android/i.test(navigator.userAgent)) document.body.classList.add('android');
+</script>
 <script>
 // The email's Copy pebble (the mailto link does nothing where no mail program is set up).
 document.getElementById('copy-email').addEventListener('click', async e => {

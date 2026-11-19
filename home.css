@@ -76,6 +76,8 @@ body:not(.gems) .pebble-link { background: #8d877f; border-radius: 40%; }
 body:not(.gems) .pebble-link.dark { background: #2c2a2e; }
 .cta { margin-top: 1rem; }
 .email-line { color: var(--muted); }
+.open-app { display: none; color: var(--muted); }
+body.android .open-app { display: block; }
 .email { color: var(--fg); user-select: all; font-weight: 500; }
 .email-line .pebble-link { margin-left: .4rem; border: 0; background: transparent; cursor: pointer; font-family: inherit; }
 
