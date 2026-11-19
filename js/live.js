@@ -56,16 +56,24 @@ void main() {
     vec3 c = texelFetch(uCur, ivec2(f), 0).rgb;
     vec2 o = uView.xy + (f - 0.5 * uRes) * (uView.z / uRes.y);
     vec2 pf = (o - uPrev.xy) * (uRes.y / uPrev.z) + 0.5 * uRes;
-    if (uKeep > 0.0 && all(greaterThan(pf, vec2(1.0))) && all(lessThan(pf, uRes - 1.0)))
-        c = mix(c, clamp(catmullRom(pf), 0.0, 1.0), uKeep);
+    // Pixels drifting in at an edge have no history of their own: they take the nearest edge's,
+    // at most a pixel or so away, rather than showing one noisy sample (sparkles round the frame).
+    if (uKeep > 0.0) c = mix(c, clamp(catmullRom(clamp(pf, vec2(1.5), uRes - 1.5)), 0.0, 1.0), uKeep);
     frag = vec4(c, 1.0);
 }`;
   const SHOW_FS = `#version 300 es
 precision highp float;
 uniform sampler2D uTex;
 uniform float uFade;
+uniform vec2 uRes;
 out vec4 frag;
-void main() { frag = vec4(texelFetch(uTex, ivec2(gl_FragCoord.xy), 0).rgb * uFade, 1.0); }`;
+void main() {
+    // A slight vignette: corners down to ~70%, the middle untouched.
+    vec2 q = (gl_FragCoord.xy / uRes - 0.5) * 2.0;
+    float r = length(q * vec2(uRes.x / length(uRes), uRes.y / length(uRes))) * 1.4142;
+    float v = mix(1.0, 0.7, smoothstep(0.45, 1.0, r));
+    frag = vec4(texelFetch(uTex, ivec2(gl_FragCoord.xy), 0).rgb * uFade * v, 1.0);
+}`;
 
   const ZOOM_RATE = 0.085;     // octaves a second
   const DRIFT_MAX = 0.045;     // the most it drifts sideways, in screen heights a second
@@ -146,7 +154,7 @@ void main() { frag = vec4(texelFetch(uTex, ivec2(gl_FragCoord.xy), 0).rgb * uFad
   function uniforms(p, names) { const u = {}; for (const n of names) u[n] = gl.getUniformLocation(p, n); return u; }
   const resolve = link(RESOLVE_FS).p, show = link(SHOW_FS).p;
   const RU = uniforms(resolve, ['uCur', 'uHist', 'uRes', 'uView', 'uPrev', 'uKeep']);
-  const SU = uniforms(show, ['uTex', 'uFade']);
+  const SU = uniforms(show, ['uTex', 'uFade', 'uRes']);
 
   // Its gradients: the PNG's top half, UF's rows (the bottom half is the same in linear light).
   async function gradient(id) {
@@ -301,6 +309,7 @@ void main() { frag = vec4(texelFetch(uTex, ivec2(gl_FragCoord.xy), 0).rgb * uFad
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, dst.tex);
     gl.uniform1i(SU.uTex, 0);
     gl.uniform1f(SU.uFade, fade * fade * (3 - 2 * fade));
+    gl.uniform2f(SU.uRes, w, h);
     quadDraw(w, h);
     histAt = 1 - histAt;
     prevView = { ...view };
