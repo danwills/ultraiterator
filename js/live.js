@@ -2,6 +2,10 @@
 // parameters (uprLib's uprPort/liveexport.py, the app's assets/live/), drawn by the
 // browser's GPU as they are on the phone, diving slowly towards detail.
 // No pictures are downloaded for it: each is a shader and its gradients.
+//
+// Each frame takes one jittered sample a pixel (more where the frame rate allows: LADDER) and
+// blends it into the frames before, lined up exactly where they were (the camera's a known
+// pan and zoom over a fractal that doesn't change), so the noisy ones settle smooth.
 (function () {
   'use strict';
 
@@ -11,7 +15,7 @@ uniform sampler2D uGrad;   // its gradients' 400 colours, a row a layer (UF's ro
 uniform int uAA;           // samples a side
 uniform vec3 uView;        // the view's middle (x, y) and height (z), in the picture's units (its 2k's height = 1)
 uniform vec2 uRes;
-uniform float uFade;
+uniform vec2 uJitter;      // this frame's sub-pixel offset
 out vec4 frag;
 `;
   // As the app's LIVE_GEN_MAIN, but `o` from the view rather than a tile.
@@ -20,21 +24,58 @@ void main() {
     vec3 sum = vec3(0.0);
     float px = uView.z / uRes.y;
     for (int j = 0; j < uAA; j++) for (int i = 0; i < uAA; i++) {
-        vec2 f = gl_FragCoord.xy + (vec2(i, j) + 0.5) / float(uAA) - 0.5;
+        vec2 f = gl_FragCoord.xy + uJitter + (vec2(i, j) + 0.5) / float(uAA) - 0.5;
         sum += liveColour(uView.xy + (f - 0.5 * uRes) * px);
     }
-    vec3 c = clamp(sum / float(uAA * uAA), 0.0, 1.0);
-    frag = vec4(c * uFade, 1.0);
+    frag = vec4(clamp(sum / float(uAA * uAA), 0.0, 1.0), 1.0);
 }`;
   const VS = `#version 300 es
 in vec2 aPos;
 void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
+  // The blend: this frame's samples with the history, read back where this pixel was in the
+  // last frame's view (Catmull-Rom, so repeated resampling doesn't blur it).
+  const RESOLVE_FS = `#version 300 es
+precision highp float;
+uniform sampler2D uCur, uHist;
+uniform vec2 uRes;
+uniform vec3 uView, uPrev;
+uniform float uKeep;       // the history's weight (0: start afresh)
+out vec4 frag;
+vec3 catmullRom(vec2 p) {
+    vec2 tc = floor(p - 0.5) + 0.5, f = p - tc;
+    vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f)), w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+    vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f)), w3 = f * f * (-0.5 + 0.5 * f);
+    vec2 w12 = w1 + w2, t12 = (tc + w2 / w12) / uRes, t0 = (tc - 1.0) / uRes, t3 = (tc + 2.0) / uRes;
+    vec3 c = texture(uHist, vec2(t12.x, t0.y)).rgb * w12.x * w0.y
+           + texture(uHist, vec2(t0.x, t12.y)).rgb * w0.x * w12.y + texture(uHist, t12).rgb * w12.x * w12.y + texture(uHist, vec2(t3.x, t12.y)).rgb * w3.x * w12.y
+           + texture(uHist, vec2(t12.x, t3.y)).rgb * w12.x * w3.y;
+    return c / (w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y);
+}
+void main() {
+    vec2 f = gl_FragCoord.xy;
+    vec3 c = texelFetch(uCur, ivec2(f), 0).rgb;
+    vec2 o = uView.xy + (f - 0.5 * uRes) * (uView.z / uRes.y);
+    vec2 pf = (o - uPrev.xy) * (uRes.y / uPrev.z) + 0.5 * uRes;
+    if (uKeep > 0.0 && all(greaterThan(pf, vec2(1.0))) && all(lessThan(pf, uRes - 1.0)))
+        c = mix(c, clamp(catmullRom(pf), 0.0, 1.0), uKeep);
+    frag = vec4(c, 1.0);
+}`;
+  const SHOW_FS = `#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform float uFade;
+out vec4 frag;
+void main() { frag = vec4(texelFetch(uTex, ivec2(gl_FragCoord.xy), 0).rgb * uFade, 1.0); }`;
 
-  const ZOOM_RATE = 0.16;      // octaves a second
-  const RETARGET = 3.5;        // seconds between looks for detail
+  const ZOOM_RATE = 0.085;     // octaves a second
+  const DRIFT_MAX = 0.045;     // the most it drifts sideways, in screen heights a second
+  const RETARGET = 4.5;        // seconds between looks for detail
   const PROBE = 40;            // the look's size, px square
   const IDLE_RESUME = 9;       // seconds after a touch before it steers itself again
-  const FADE = 1.2;            // seconds to fade between fractals
+  const FADE = 1.5;            // seconds to fade between fractals
+  const KEEP_MAX = 0.9;        // the history's most weight: about the last ten frames
+  // Render scale (CSS px a pixel, up to the screen's own) and samples a side, cheapest first.
+  const LADDER = [[0.4, 1], [0.5, 1], [0.65, 1], [0.8, 1], [1, 1], [1.25, 1], [1.5, 1], [1.5, 2]];
 
   const canvas = document.getElementById('live');
   const info = document.getElementById('live-name');
@@ -42,30 +83,39 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
   if (!canvas) return;
   const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, preserveDrawingBuffer: false });
   if (!gl) { document.body.classList.add('no-live'); return; }
+  const floatHist = !!gl.getExtension('EXT_color_buffer_float');
 
   let common = '';
-  let picks = [];
   let order = [];
   let cur = null;          // { pick, prog, tex, uni }
   let at = 0;              // place in `order`
-  let view = { x: 0, y: 0, h: 1 };
-  let target = { x: 0, y: 0 };
-  let startH = 1, minH = 1e-3, born = 0, lastLook = 0, lastTouch = -1e9;
+  let view = { x: 0, y: 0, h: 1 }, prevView = null;
+  let target = { x: 0, y: 0 }, aim = { x: 0, y: 0 }, vel = { x: 0, y: 0 };
+  let startH = 1, minH = 1e-3, lastLook = 0, lastTouch = -1e9, steerT = 0;
   let fade = 0, fadeDir = 1, paused = false, leaving = false;
-  let scale = Math.min(window.devicePixelRatio || 1, 1.5) * 0.6;   // render scale, adapted to keep it smooth
-  let frameTimes = [];
+  let frames = 0, jitterI = 0;
 
   const quad = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, quad);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-  const probeTex = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, probeTex);
-  gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, PROBE, PROBE);
-  const probeFb = gl.createFramebuffer();
-  gl.bindFramebuffer(gl.FRAMEBUFFER, probeFb);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, probeTex, 0);
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+  function target2d(w, h, internal) {
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, internal, w, h);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    const fb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return { tex, fb, w, h, free() { gl.deleteTexture(tex); gl.deleteFramebuffer(fb); } };
+  }
+  const probe = target2d(PROBE, PROBE, gl.RGBA8);
   const probePx = new Uint8Array(PROBE * PROBE * 4);
+  let sampled = null, hist = [null, null], histAt = 0;
 
   function shader(type, src) {
     const s = gl.createShader(type);
@@ -74,12 +124,16 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
   }
   // Compiles without waiting where the browser can (KHR_parallel_shader_compile).
   const parallel = gl.getExtension('KHR_parallel_shader_compile');
-  function program(fs) {
+  function link(fs) {
     const p = gl.createProgram();
-    const v = shader(gl.VERTEX_SHADER, VS), f = shader(gl.FRAGMENT_SHADER, fs);
-    gl.attachShader(p, v); gl.attachShader(p, f);
+    const f = shader(gl.FRAGMENT_SHADER, fs);
+    gl.attachShader(p, shader(gl.VERTEX_SHADER, VS)); gl.attachShader(p, f);
     gl.bindAttribLocation(p, 0, 'aPos');
     gl.linkProgram(p);
+    return { p, f };
+  }
+  function program(fs) {
+    const { p, f } = link(fs);
     return new Promise((resolve, reject) => {
       const check = () => {
         if (parallel && !gl.getProgramParameter(p, parallel.COMPLETION_STATUS_KHR)) { setTimeout(check, 30); return; }
@@ -89,6 +143,10 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
       check();
     });
   }
+  function uniforms(p, names) { const u = {}; for (const n of names) u[n] = gl.getUniformLocation(p, n); return u; }
+  const resolve = link(RESOLVE_FS).p, show = link(SHOW_FS).p;
+  const RU = uniforms(resolve, ['uCur', 'uHist', 'uRes', 'uView', 'uPrev', 'uKeep']);
+  const SU = uniforms(show, ['uTex', 'uFade']);
 
   // Its gradients: the PNG's top half, UF's rows (the bottom half is the same in linear light).
   async function gradient(id) {
@@ -97,8 +155,7 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
     const rows = Math.max(1, bmp.height >> 1);
     const c = document.createElement('canvas');
     c.width = bmp.width; c.height = rows;
-    const g = c.getContext('2d', { colorSpace: 'srgb' });
-    g.drawImage(bmp, 0, 0);
+    c.getContext('2d', { colorSpace: 'srgb' }).drawImage(bmp, 0, 0);
     const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
@@ -116,9 +173,7 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
       loaded.set(pick.id, (async () => {
         const src = await (await fetch('live/' + pick.id + '.glsl')).text();
         const [prog, tex] = await Promise.all([program(HEAD + common + src + MAIN), gradient(pick.id)]);
-        const uni = {};
-        for (const n of ['uGrad', 'uAA', 'uView', 'uRes', 'uFade']) uni[n] = gl.getUniformLocation(prog, n);
-        return { pick, prog, tex, uni };
+        return { pick, prog, tex, uni: uniforms(prog, ['uGrad', 'uAA', 'uView', 'uRes', 'uJitter']) };
       })());
     }
     return loaded.get(pick.id);
@@ -141,136 +196,239 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
     startH = 1.0;
     minH = startH / Math.min(pick.depth * 2048 / Math.max(canvas.height, 1), 4096);
     view = { x: 0, y: 0, h: startH };
-    target = { x: 0, y: 0 };
-    born = performance.now() / 1000; lastLook = born - RETARGET + 1.0;
-    fade = 0; fadeDir = 1; leaving = false;
+    target = { x: 0, y: 0 }; aim = { x: 0, y: 0 }; vel = { x: 0, y: 0 };
+    lastLook = performance.now() / 1000 - RETARGET + 1.0; steerT = 0;
+    fade = 0; fadeDir = 1; leaving = false; frames = 0;
     load(order[(at + 1) % order.length]).catch(() => {});   // the next one compiles meanwhile
   }
 
-  function draw(u, w, h, v, f) {
-    gl.useProgram(cur.prog);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, cur.tex);
-    gl.uniform1i(u.uGrad, 0);
-    gl.uniform1i(u.uAA, cur.pick.aa);
-    gl.uniform3f(u.uView, v.x, v.y, v.h);
-    gl.uniform2f(u.uRes, w, h);
-    gl.uniform1f(u.uFade, f);
+  function quadDraw(w, h) {
     gl.viewport(0, 0, w, h);
     gl.bindBuffer(gl.ARRAY_BUFFER, quad);
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
+  function drawFractal(w, h, v, aa, jx, jy) {
+    const u = cur.uni;
+    gl.useProgram(cur.prog);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, cur.tex);
+    gl.uniform1i(u.uGrad, 0);
+    gl.uniform1i(u.uAA, aa);
+    gl.uniform3f(u.uView, v.x, v.y, v.h);
+    gl.uniform2f(u.uRes, w, h);
+    gl.uniform2f(u.uJitter, jx, jy);
+    quadDraw(w, h);
+  }
 
-  // Where's the detail? A small render of a view a little wider than the screen, and the cell
-  // with the most contrast among its neighbours, leaning towards the middle so it doesn't wander.
+  // Where's the detail? A small render of the view, and the cell with the most contrast among
+  // its neighbours, leaning towards the middle and towards the way it's already drifting, so
+  // its course bends gently rather than doubling back.
   function look() {
-    const wide = { x: view.x, y: view.y, h: view.h * 0.9 };
-    gl.bindFramebuffer(gl.FRAMEBUFFER, probeFb);
-    draw(cur.uni, PROBE, PROBE, wide, 1);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, probe.fb);
+    drawFractal(PROBE, PROBE, view, 1, 0, 0);
     gl.readPixels(0, 0, PROBE, PROBE, gl.RGBA, gl.UNSIGNED_BYTE, probePx);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     const L = (x, y) => { const k = (y * PROBE + x) * 4; return 0.3 * probePx[k] + 0.59 * probePx[k + 1] + 0.11 * probePx[k + 2]; };
+    const sp = Math.hypot(vel.x, vel.y);
     let best = -1, bx = PROBE / 2, by = PROBE / 2;
-    for (let y = 3; y < PROBE - 3; y += 2) for (let x = 3; x < PROBE - 3; x += 2) {
+    for (let y = 4; y < PROBE - 4; y += 2) for (let x = 4; x < PROBE - 4; x += 2) {
       let s = 0, s2 = 0;
       for (let j = -2; j <= 2; j++) for (let i = -2; i <= 2; i++) { const l = L(x + i, y + j); s += l; s2 += l * l; }
-      const varc = s2 / 25 - (s / 25) * (s / 25);
-      const dx = x / PROBE - 0.5, dy = y / PROBE - 0.5;
-      const score = Math.sqrt(Math.max(varc, 0)) * (1 - 1.6 * (dx * dx + dy * dy)) + Math.random() * 6;
+      const sd = Math.sqrt(Math.max(s2 / 25 - (s / 25) * (s / 25), 0));
+      const dx = x / PROBE - 0.5, dy = y / PROBE - 0.5, r = Math.hypot(dx, dy);
+      const along = sp > 1e-4 && r > 1e-3 ? (dx * vel.x + dy * vel.y) / (r * sp) : 0;
+      const score = sd * (1 - 1.8 * r * r) * (1 + 0.5 * along) + Math.random() * 2;
       if (score > best) { best = score; bx = x; by = y; }
     }
-    // (The probe's square, wide.h each way, so only the middle of a wide screen is looked at.)
-    target = { x: view.x + (bx / PROBE - 0.5) * wide.h, y: view.y + (by / PROBE - 0.5) * wide.h };
+    // (The probe's square, view.h each way, so only the middle of a wide screen is looked at.)
+    target = { x: view.x + (bx / PROBE - 0.5) * view.h * 0.7, y: view.y + (by / PROBE - 0.5) * view.h * 0.7 };
+  }
+
+  // Quality: a step on LADDER, moved by how long frames take. A step that proved too slow is
+  // kept off for a while (longer each time), so it doesn't see-saw.
+  const maxScale = () => Math.min(window.devicePixelRatio || 1, 1.5);
+  const steps = () => LADDER.filter(s => s[0] <= maxScale() + 1e-6);
+  let step = 2, ceiling = 99, ceilingUntil = 0, ceilingFor = 15, frameTimes = [];
+  function adapt(dt, now) {
+    frameTimes.push(dt);
+    if (frameTimes.length < 30) return;
+    frameTimes.sort((a, b) => a - b);
+    const med = frameTimes[15];
+    frameTimes = [];
+    const top = steps().length - 1;
+    if (now > ceilingUntil) ceiling = 99;
+    if (med > 0.03 && step > 0) { ceiling = step - 1; ceilingUntil = now + ceilingFor; ceilingFor = Math.min(ceilingFor * 2, 240); step--; }
+    else if (med < 0.019 && step < Math.min(top, ceiling)) step++;
+    step = Math.min(step, top);
   }
 
   function resize() {
     const r = canvas.getBoundingClientRect();
-    const w = Math.max(16, Math.round(r.width * scale)), h = Math.max(16, Math.round(r.height * scale));
-    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+    const s = steps()[step][0];
+    const w = Math.max(16, Math.round(r.width * s)), h = Math.max(16, Math.round(r.height * s));
+    if (canvas.width === w && canvas.height === h && sampled) return;
+    canvas.width = w; canvas.height = h;
+    for (const t of [sampled, hist[0], hist[1]]) if (t) t.free();
+    sampled = target2d(w, h, gl.RGBA8);
+    hist = [target2d(w, h, floatHist ? gl.RGBA16F : gl.RGBA8), target2d(w, h, floatHist ? gl.RGBA16F : gl.RGBA8)];
+    frames = 0;
   }
 
-  // Keep it smooth: a lower render scale when frames are slow, higher when there's room.
-  function adapt(dt) {
-    frameTimes.push(dt);
-    if (frameTimes.length < 20) return;
-    frameTimes.sort((a, b) => a - b);
-    const med = frameTimes[10];
-    frameTimes = [];
-    const maxScale = Math.min(window.devicePixelRatio || 1, 1.5);
-    if (med > 0.045 && scale > 0.45) scale *= 0.85;   // (not below ~half a CSS px: chunkier looked worse than slower)
-    else if (med < 0.022 && scale < maxScale) scale = Math.min(maxScale, scale * 1.12);
+  // Halton (2, 3): sub-pixel offsets that cover the pixel evenly.
+  function halton(i, b) { let f = 1, r = 0; while (i > 0) { f /= b; r += f * (i % b); i = Math.floor(i / b); } return r; }
+
+  function render() {
+    const w = canvas.width, h = canvas.height;
+    jitterI = (jitterI % 16) + 1;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, sampled.fb);
+    drawFractal(w, h, view, steps()[step][1], halton(jitterI, 2) - 0.5, halton(jitterI, 3) - 0.5);
+    const src = hist[histAt], dst = hist[1 - histAt];
+    gl.bindFramebuffer(gl.FRAMEBUFFER, dst.fb);
+    gl.useProgram(resolve);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, sampled.tex);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, src.tex);
+    gl.uniform1i(RU.uCur, 0); gl.uniform1i(RU.uHist, 1);
+    gl.uniform2f(RU.uRes, w, h);
+    gl.uniform3f(RU.uView, view.x, view.y, view.h);
+    const pv = prevView || view;
+    gl.uniform3f(RU.uPrev, pv.x, pv.y, pv.h);
+    gl.uniform1f(RU.uKeep, frames > 0 ? Math.min(1 - 1 / (frames + 1), KEEP_MAX) : 0);
+    quadDraw(w, h);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.useProgram(show);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, dst.tex);
+    gl.uniform1i(SU.uTex, 0);
+    gl.uniform1f(SU.uFade, fade * fade * (3 - 2 * fade));
+    quadDraw(w, h);
+    histAt = 1 - histAt;
+    prevView = { ...view };
+    frames++;
   }
 
   let visible = true;
   new IntersectionObserver(es => { visible = es[0].isIntersecting; }).observe(canvas);
 
+  const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
   let prev = performance.now() / 1000;
   function frame() {
     requestAnimationFrame(frame);
     const now = performance.now() / 1000;
     const dt = Math.min(now - prev, 0.1); prev = now;
-    if (!cur || !visible || document.hidden) return;
-    adapt(dt);
+    if (!cur || !visible || document.hidden) { frames = 0; return; }
+    adapt(dt, now);
     resize();
-    const steering = now - lastTouch > IDLE_RESUME;
-    if (!paused && steering) {
-      view.h *= Math.pow(2, -ZOOM_RATE * dt);
+    if (!paused && now - lastTouch > IDLE_RESUME) {
+      // Ease in after a start or a touch, and out towards the end of its depth.
+      steerT += dt;
+      const ease = smooth(0, 4, steerT) * (0.25 + 0.75 * smooth(minH, minH * 6, view.h));
+      view.h *= Math.pow(2, -ZOOM_RATE * ease * dt);
       if (now - lastLook > RETARGET) { lastLook = now; look(); }
-      const k = 1 - Math.exp(-dt * 0.5);
-      view.x += (target.x - view.x) * k;
-      view.y += (target.y - view.y) * k;
-      if (view.h <= minH && !leaving) { leaving = true; fadeDir = -1; }
+      // The aim glides to the target, and a critically damped spring follows the aim, so the
+      // drift's speed and direction both change smoothly (no kinks when the target moves).
+      const k = 1 - Math.exp(-dt * 0.4);
+      aim.x += (target.x - aim.x) * k; aim.y += (target.y - aim.y) * k;
+      const w0 = 0.6;
+      for (const c of ['x', 'y']) {
+        const err = (aim[c] - view[c]) / view.h;   // in screen heights
+        vel[c] += (w0 * w0 * err - 2 * w0 * vel[c]) * dt;
+      }
+      const sp = Math.hypot(vel.x, vel.y), cap = DRIFT_MAX * ease + 1e-6;
+      if (sp > cap) { vel.x *= cap / sp; vel.y *= cap / sp; }
+      view.x += vel.x * view.h * dt; view.y += vel.y * view.h * dt;
+      if (view.h <= minH * 1.2 && !leaving) { leaving = true; fadeDir = -1; }
     }
     fade = Math.min(1, Math.max(0, fade + fadeDir * dt / FADE));
     if (leaving && fade <= 0) { begin(at + 1); return; }
-    draw(cur.uni, canvas.width, canvas.height, view, fade);
+    render();
     if (poster && fade > 0.99) poster.classList.add('gone');
   }
 
-  // Touch: drag to move, pinch or Ctrl+wheel to zoom; it steers itself again after a while. On a
-  // touch screen the canvas is touch-action: pan-y, so a vertical swipe still scrolls the page
-  // (the browser takes it, and cancels the pointer) and a sideways one moves the fractal.
-  const pointers = new Map();
-  let pinch = 0;
-  canvas.addEventListener('pointerdown', e => { canvas.setPointerCapture(e.pointerId); pointers.set(e.pointerId, { x: e.clientX, y: e.clientY }); lastTouch = performance.now() / 1000; });
-  canvas.addEventListener('pointerup', e => { pointers.delete(e.pointerId); pinch = 0; });
-  canvas.addEventListener('pointercancel', e => { pointers.delete(e.pointerId); pinch = 0; });
-  canvas.addEventListener('pointermove', e => {
-    const p = pointers.get(e.pointerId);
-    if (!p) return;
-    const r = canvas.getBoundingClientRect();
+  // After the hand: carry on from here, still.
+  function touched() {
     lastTouch = performance.now() / 1000;
-    if (pointers.size === 1) {
-      view.x -= (e.clientX - p.x) / r.height * view.h;
-      view.y += (e.clientY - p.y) / r.height * view.h;
-    } else if (pointers.size === 2) {
-      p.x = e.clientX; p.y = e.clientY;
-      const [a, b] = [...pointers.values()];
-      const d = Math.hypot(a.x - b.x, a.y - b.y);
-      if (pinch) zoomBy(pinch / d);
-      pinch = d;
-      return;
-    }
-    p.x = e.clientX; p.y = e.clientY;
-    target = { x: view.x, y: view.y };
-  });
-  function zoomBy(f) { view.h = Math.min(startH * 2, Math.max(minH, view.h * f)); target = { x: view.x, y: view.y }; }
-  // Only Ctrl+wheel zooms (a trackpad's pinch sends that too); a plain wheel scrolls the page.
+    target = { x: view.x, y: view.y }; aim = { ...target }; vel = { x: 0, y: 0 }; steerT = 0;
+  }
+  // The plane under a point on the canvas (client px).
+  function planeAt(cx, cy) {
+    const r = canvas.getBoundingClientRect();
+    return { x: view.x + (cx - r.left - r.width / 2) / r.height * view.h, y: view.y - (cy - r.top - r.height / 2) / r.height * view.h };
+  }
+  // Zoom by f about a client point, which stays put.
+  function zoomAbout(f, cx, cy) {
+    const a = planeAt(cx, cy);
+    const h = Math.min(startH * 2, Math.max(minH, view.h * f));
+    view.x = a.x + (view.x - a.x) * h / view.h; view.y = a.y + (view.y - a.y) * h / view.h;
+    view.h = h;
+    touched();
+  }
+  function panBy(dx, dy) {
+    const r = canvas.getBoundingClientRect();
+    view.x -= dx / r.height * view.h; view.y += dy / r.height * view.h;
+    touched();
+  }
+
+  // Mouse and pen: drag to move, Ctrl+wheel (or a trackpad's pinch, which sends that) to zoom.
+  let mouse = null;
+  canvas.addEventListener('pointerdown', e => { if (e.pointerType === 'touch') return; canvas.setPointerCapture(e.pointerId); mouse = { x: e.clientX, y: e.clientY }; touched(); });
+  canvas.addEventListener('pointermove', e => { if (!mouse || e.pointerType === 'touch') return; panBy(e.clientX - mouse.x, e.clientY - mouse.y); mouse = { x: e.clientX, y: e.clientY }; });
+  canvas.addEventListener('pointerup', () => { mouse = null; });
+  canvas.addEventListener('pointercancel', () => { mouse = null; });
   canvas.addEventListener('wheel', e => {
-    if (!e.ctrlKey) return;
-    e.preventDefault(); lastTouch = performance.now() / 1000; zoomBy(Math.pow(2, e.deltaY * 0.01));
+    if (!e.ctrlKey) return;   // a plain wheel scrolls the page
+    e.preventDefault(); zoomAbout(Math.pow(2, e.deltaY * 0.01), e.clientX, e.clientY);
   }, { passive: false });
 
+  // Touch, by touch events (the canvas is touch-action: pan-y): two fingers pinch and move it;
+  // one finger moving sideways first moves it, and moving up or down first scrolls the page.
+  let tmode = null, t0 = null, pinchD = 0, pinchM = null;
+  const mid = ts => ({ x: (ts[0].clientX + ts[1].clientX) / 2, y: (ts[0].clientY + ts[1].clientY) / 2 });
+  const dist = ts => Math.hypot(ts[0].clientX - ts[1].clientX, ts[0].clientY - ts[1].clientY);
+  canvas.addEventListener('touchstart', e => {
+    if (e.touches.length >= 2) {
+      e.preventDefault();
+      tmode = 'pinch'; pinchD = dist(e.touches); pinchM = mid(e.touches); touched();
+    } else if (e.touches.length === 1) {
+      tmode = null; t0 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    }
+  }, { passive: false });
+  canvas.addEventListener('touchmove', e => {
+    if (e.touches.length >= 2) {
+      if (e.cancelable) e.preventDefault();
+      if (tmode !== 'pinch') { tmode = 'pinch'; pinchD = dist(e.touches); pinchM = mid(e.touches); return; }
+      const d = dist(e.touches), m = mid(e.touches);
+      panBy(m.x - pinchM.x, m.y - pinchM.y);
+      zoomAbout(pinchD / Math.max(d, 1), m.x, m.y);
+      pinchD = d; pinchM = m;
+      return;
+    }
+    const t = e.touches[0];
+    if (!t0 || tmode === 'scroll' || tmode === 'pinch') return;
+    const dx = t.clientX - t0.x, dy = t.clientY - t0.y;
+    if (!tmode) {
+      if (Math.hypot(dx, dy) < 6) return;
+      tmode = Math.abs(dx) > Math.abs(dy) ? 'pan' : 'scroll';
+      if (tmode === 'scroll') return;
+    }
+    if (e.cancelable) e.preventDefault();
+    panBy(dx, dy);
+    t0 = { x: t.clientX, y: t.clientY };
+  }, { passive: false });
+  canvas.addEventListener('touchend', e => {
+    if (e.touches.length === 0) { tmode = null; t0 = null; }
+    else if (e.touches.length === 1) { tmode = 'pan'; t0 = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }
+  });
+
   window.UILive = {
-    next() { leaving = true; fadeDir = -1; },
-    togglePause() { paused = !paused; return paused; },
+    next() { leaving = true; fadeDir = -1; lastTouch = -1e9; },
+    togglePause() { paused = !paused; if (!paused) steerT = 0; return paused; },
   };
 
   canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); cur = null; });
 
   (async () => {
+    let picks;
     [common, picks] = await Promise.all([
       fetch('live/common.glsl').then(r => r.text()),
       fetch('live/picks.json').then(r => r.json()),
