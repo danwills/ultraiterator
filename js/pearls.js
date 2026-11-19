@@ -229,7 +229,7 @@ void main() {
         if (i >= uCount) break;
         vec4 rc = uRect[i], k = uKind[i];
         vec2 rel = p - rc.xy;
-        float marg = 14.0 * uDpr;   // (room for the shadow and the grass)
+        float marg = 16.0 * uDpr;   // (room for the shadow and the grass)
         if (abs(rel.x) > rc.z + marg || abs(rel.y) > rc.w + marg) continue;
         int kind = int(k.x + 0.5), look = int(k.y + 0.5);
         float seed = k.z, hover = k.w;
@@ -261,7 +261,7 @@ void main() {
         float shadow = 0.5 * (1.0 - smoothstep(-2.0 * uDpr, 8.0 * uDpr, sd));
         vec3 col = vec3(0.0);
         if (body > 0.0) col = kind == 0 ? pebble(look, q, nn, seed, hover, rel / uDpr, rc.zw / uDpr, uMore[i].w)
-            : look == 19 ? mix(pearl(11, q, nn, seed, hover) * 1.15, pearl(10, q, nn, seed, hover) * 1.08, uMore[i].x)
+            : look == 19 ? mix(pearl(11, q, nn, seed, hover) * 0.95, pearl(10, q, nn, seed, hover) * 1.3, uMore[i].x)
             : pearl(look, q, nn, seed, hover);
         // Shadow under, then the stone over it.
         vec4 s = vec4(0.0, 0.0, 0.0, shadow * (1.0 - body));
@@ -278,6 +278,23 @@ void main() {
                 item.rgb = mix(item.rgb, warm * body, call * 0.6);
                 float halo = call * (1.0 - body) * exp(-max(d, 0.0) / (5.0 * uDpr)) * smoothstep(13.0 * uDpr, 6.0 * uDpr, d) * 0.8;   // (gone by the margin)
                 item = vec4(warm * halo, halo) + item * (1.0 - halo);
+            }
+            // Refined: a soft, cool glow round it grows towards the end, so later progress shows too.
+            float lit = smoothstep(0.35, 1.0, m.x);
+            if (lit > 0.0) {
+                float halo = lit * lit * (1.0 - body) * exp(-max(d, 0.0) / (4.5 * uDpr)) * smoothstep(13.0 * uDpr, 6.0 * uDpr, d) * 0.55;
+                item = vec4(vec3(0.93, 0.95, 1.0) * halo, halo) + item * (1.0 - halo);
+            }
+            float moonA = floor(m.w / 10.0) / 99.0;
+            if (moonA > 0.0) {
+                // The refining moon: a tiny pale circle orbiting just outside the rim.
+                float R = min(rc.z, rc.w), ang = m.w - floor(m.w / 10.0) * 10.0 - 1.5707963;
+                vec2 mp = vec2(cos(ang), sin(ang)) * (R + 5.0 * uDpr);
+                float md = length(rel - mp) - 2.2 * uDpr;
+                float sh = (1.0 - smoothstep(-1.0 * uDpr, 3.0 * uDpr, length(rel - mp - vec2(0.6, 1.2) * uDpr) - 2.2 * uDpr)) * 0.6 * moonA;
+                float mo = (1.0 - smoothstep(-0.7 * uDpr, 0.7 * uDpr, md)) * moonA;
+                item = vec4(0.0, 0.0, 0.0, sh) * (1.0 - item.a) + item;
+                item = vec4(vec3(1.0, 0.97, 0.9) * mo, mo) + item * (1.0 - mo);
             }
             if (m.y >= 0.0 && body > 0.0) {
                 vec3 ink = mix(vec3(1.0), vec3(0.08, 0.07, 0.1), smoothstep(0.45, 0.75, max(m.x, call)));
@@ -394,8 +411,12 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
       el._glowShown = (el._glowShown ?? (el._glow || 0)) + ((el._glow || 0) - (el._glowShown ?? 0)) * (1 - Math.exp(-dt * 3));
       el._callShown = (el._callShown || 0) + ((el._call || 0) - (el._callShown || 0)) * (1 - Math.exp(-dt * 6));
       // A pebble's: rockiness, -, -, moss; the state pearl's: glow, countdown, call glow, -.
+      // (and the state pearl's w: its orbiting moon, 10 × its alpha (eased) + its angle)
+      const orb = el._orbit;
+      el._orbitA = (el._orbitA || 0) + ((orb ? orb.show : 0) - (el._orbitA || 0)) * (1 - Math.exp(-dt * 4));
+      if (orb) el._ang = ((el._ang || 0) + orb.speed * dt) % (2 * Math.PI);
       if (kind === 0) more.set([parseFloat(el.dataset.rocky || 0), 0, 0, parseFloat(el.dataset.moss || 1)], n * 4);
-      else more.set([el._glowShown, el._count ?? -1, el._callShown, 0], n * 4);
+      else more.set([el._glowShown, el._count ?? -1, el._callShown, Math.floor(el._orbitA * 99) * 10 + (el._ang || 0)], n * 4);
       n++;
     }
     gl.viewport(0, 0, W, H);
