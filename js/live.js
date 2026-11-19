@@ -597,7 +597,7 @@ void main() {
   // After a touch it's half paused: the pearl shows hollow pause bars in a ring that runs down
   // till the dive carries on (a tap on it pauses for good), and over the last CALL_LEAD s a warm
   // glow grows over it, the reminder, till it takes the pearl and the dive starts again.
-  const GLOW_PLAY = 0.05, GLOW_FULL_AT = 1024, CALL_LEAD = 3, ORBIT_SPEED = 3;   // (rad/s at first)
+  const GLOW_PLAY = 0.05, GLOW_FULL_AT = 1024, CALL_LEAD = 3, ORBIT_SPEED = 3, ORBIT_HALF = 12;   // (rad/s at first; half that by ORBIT_HALF samples, a crawl past ~100, when the gains are small)
   const pauseGlyph = pausePearl && pausePearl.querySelector('.glyph');
   let shownMode = '';
   function showState() {
@@ -605,10 +605,10 @@ void main() {
     const n = refining ? refN : !canRefine && still > 0 ? Math.min(still, STILL_FRAMES) * 2 : 0;
     const prog = Math.min(1, Math.log2(1 + n) / Math.log2(1 + GLOW_FULL_AT));
     pausePearl._glow = GLOW_PLAY + (1 - GLOW_PLAY) * prog;
-    // While it refines, a tiny moon circles the pearl, slowing as the picture gets about as good as
-    // it will (js/pearls.js integrates its angle).
+    // While it refines, a tiny moon circles the pearl: briskly over the first few dozen samples, where
+    // the picture visibly improves, then hardly moving through the long tail (js/pearls.js integrates its angle).
     const working = refining || (!canRefine && still > 0 && still < STILL_FRAMES);
-    pausePearl._orbit = working ? { speed: ORBIT_SPEED * Math.pow(1 - prog, 1.5), show: 1 - smooth(0.85, 1, prog) } : null;
+    pausePearl._orbit = working ? { speed: ORBIT_SPEED / (1 + Math.pow(n / ORBIT_HALF, 1.5)), show: 1 - smooth(0.85, 1, prog) } : null;
     const left = IDLE_RESUME - (performance.now() / 1000 - lastTouch);
     const half = !paused && left > 0;
     pausePearl._count = half ? left / IDLE_RESUME : -1;
