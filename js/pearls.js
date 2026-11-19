@@ -292,15 +292,19 @@ void main() {
                 float R = min(rc.z, rc.w), ang = mw - floor(mw / 10.0) * 10.0 - 1.5707963;
                 vec2 mp = vec2(cos(ang), sin(ang)) * (R + 5.5 * uDpr);
                 float md = length(rel - mp) - 2.8 * uDpr;
-                float sh = (1.0 - smoothstep(-1.0 * uDpr, 3.0 * uDpr, length(rel - mp - vec2(0.6, 1.2) * uDpr) - 2.8 * uDpr)) * 0.6 * moonA;
+                float sh = (1.0 - 0.7 * sqrt(moonF)) * (1.0 - smoothstep(-1.0 * uDpr, 3.0 * uDpr, length(rel - mp - vec2(0.6, 1.2) * uDpr) - 2.8 * uDpr)) * 0.6 * moonA;
                 float mo = (1.0 - smoothstep(-0.7 * uDpr, 0.7 * uDpr, md)) * moonA;
                 // A tiny pearl, pale while it's busy, darkening to a black pearl (a peacock-green
                 // sheen round its rim) as it slows, while the big one brightens; a highlight up left.
                 vec2 mq = (rel - mp) / (2.8 * uDpr);
                 float mr = clamp(length(mq), 0.0, 1.0);
                 vec3 dark = vec3(0.07, 0.075, 0.085) + vec3(0.06, 0.14, 0.12) * pow(mr, 2.0);
-                vec3 pale = vec3(0.88, 0.85, 0.88) - vec3(0.2, 0.22, 0.16) * pow(mr, 2.0);
-                vec3 mc = mix(dark, pale, moonF) + vec3(0.9) * smoothstep(0.55, 0.0, length(mq - vec2(-0.35, -0.4)));
+                vec3 pale = vec3(1.05, 1.02, 0.98) - vec3(0.12, 0.13, 0.08) * pow(mr, 2.0);
+                float fb = sqrt(moonF);   // (pale a while longer than it's fast)
+                vec3 mc = mix(dark, pale, fb) + vec3(0.9) * smoothstep(0.55, 0.0, length(mq - vec2(-0.35, -0.4)));
+                // While it's quick, a little glow round it, so it reads as bright, not grey.
+                float mg = fb * moonA * (1.0 - mo) * exp(-max(md, 0.0) / (2.2 * uDpr)) * 0.7;
+                item = vec4(vec3(1.0, 0.97, 0.92) * mg, mg) + item * (1.0 - mg);
                 item = vec4(0.0, 0.0, 0.0, sh) * (1.0 - item.a) + item;
                 item = vec4(mc * mo, mo) + item * (1.0 - mo);
             }
