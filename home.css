@@ -87,7 +87,7 @@ footer nav { display: flex; flex-wrap: wrap; gap: .3rem; margin-bottom: .8rem; }
 
 /* The full-tab view (js/theatre.js): the hero alone, filling the tab; bare: the fractal alone. */
 .theatre-only { display: none; }
-body.theatre main, body.theatre footer, body.theatre .hero-text { display: none; }
+body.theatre main, body.theatre footer, body.theatre .hero-text, body.theatre .live-note { display: none; }
 body.theatre .hero { height: 100vh; height: 100svh; }
 body.theatre .theatre-only { display: inline-block; }
 .theatre-back { position: absolute; left: 1rem; top: 1rem; z-index: 6; border: 0; background: transparent; cursor: pointer; font-family: inherit; }
