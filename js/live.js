@@ -105,6 +105,18 @@ void main() {
     frag = vec4(c * uFade * v, 1.0);
 }`;
 
+  // The refinement so far, as a picture, into the moving view's buffer: what a refinement started
+  // again at another resolution fades in from (rather than back from the blurrier moving view).
+  const BAKE_FS = `#version 300 es
+precision highp float;
+uniform sampler2D uAcc;
+uniform vec2 uRes, uAccRes;
+out vec4 frag;
+void main() {
+    vec4 a = texelFetch(uAcc, ivec2(gl_FragCoord.xy / uRes * uAccRes), 0);
+    frag = vec4(a.a > 0.0 ? a.rgb / a.a : vec3(0.0), 1.0);
+}`;
+
   const ZOOM_RATE = 0.085;     // octaves a second
   const DRIFT_MAX = 0.045;     // the most it drifts sideways, in screen heights a second
   const RETARGET = 4.5;        // seconds between looks for detail
@@ -130,8 +142,23 @@ void main() {
   // ...using about this share of the GPU: after each piece of work it rests as long as that took.
   // A sample a pixel that takes too long in one go is split into bands of rows, so nothing else
   // on the machine waits long behind it.
-  const REF_DUTY = 0.5;
-  const REF_BAND_MS = [6, 24];   // a band's time to aim between (halving or doubling the bands)
+  const REF_DUTY = 0.4;
+  // A band's GPU time at most: a GPU can't stop part-way through a draw, so the desktop's own
+  // drawing waits behind each one; short ones keep the whole machine responsive, not just the page.
+  const REF_BAND_MAX_MS = 3;
+  // ...but the page must stay smooth (Dan: full resolution on a modest GPU made everything sluggish).
+  // Its frame rate's watched while refining: under REF_MIN_FPS it takes a smaller share of the GPU,
+  // down to REF_DUTY_MIN, and past that refines at a lower resolution (a step of REF_SCALE_STEP,
+  // starting the sum again there). The resolution that kept up is remembered in this browser.
+  const REF_MIN_FPS = 30;
+  const REF_DUTY_MIN = 0.25;
+  const REF_SCALE_STEP = 0.75;
+  const REF_SCALE_KEY = 'ultraiterator-refine-scale';
+  // And back up: comfortable (REF_UP_FPS at its full share) for REF_UP_AFTER s, it tries a step
+  // higher; a step that then proves too slow isn't tried again for REF_UP_WAIT s (doubling).
+  const REF_UP_FPS = 50;
+  const REF_UP_AFTER = 45;
+  const REF_UP_WAIT = 300;
   // Slower than this a frame even at the ladder's bottom: it gives up and shows the picture.
   const TOO_SLOW = 0.3;
   const REF_IN = [4, 24];      // samples over which it fades in from the moving view's blend
@@ -220,7 +247,8 @@ void main() {
     });
   }
   function uniforms(p, names) { const u = {}; for (const n of names) u[n] = gl.getUniformLocation(p, n); return u; }
-  const resolve = link(RESOLVE_FS).p, show = link(SHOW_FS).p;
+  const resolve = link(RESOLVE_FS).p, show = link(SHOW_FS).p, bake = link(BAKE_FS).p;
+  const BU = uniforms(bake, ['uAcc', 'uRes', 'uAccRes']);
   const RU = uniforms(resolve, ['uCur', 'uHist', 'uRes', 'uView', 'uPrev', 'uKeep', 'uClip']);
   const SU = uniforms(show, ['uTex', 'uAcc', 'uFade', 'uRefMix', 'uRes', 'uAccRes', 'uView', 'uRefView']);
 
@@ -395,14 +423,65 @@ void main() {
     frames++;
   }
 
+  let refDuty = REF_DUTY, refFps = [], refFpsAt = 0;
+  let refScale = null;   // CSS px a pixel it refines at (null: the most for this screen)
+  try { const v = parseFloat(localStorage.getItem(REF_SCALE_KEY)); if (v > 0) refScale = v; } catch (e) {}
+  const refScaleMax = () => HI_OK ? Math.min(window.devicePixelRatio || 1, 2) : steps()[step][0];
+  const refScaleNow = () => Math.max(steps()[step][0], Math.min(refScaleMax(), refScale || 1e9));
+  let refComfort = 0, refUpAt = 0, refUpWait = REF_UP_WAIT, refWentUp = false;
+  // The page's frame rate while refining, each second: too slow, less of the GPU, then a lower
+  // resolution; comfortable for a good while, a higher one. (True: begun again at the new one.)
+  function watchFps(now, raw) {
+    refFps.push(raw);
+    if (now - refFpsAt < 1 || refFps.length < 10) return false;
+    refFps.sort((a, b) => a - b);
+    const med = refFps[refFps.length >> 1], span = now - refFpsAt;
+    refFps = []; refFpsAt = now;
+    const s = refScaleNow();
+    if (med <= 1 / REF_MIN_FPS) {
+      if (med < 1 / REF_UP_FPS) refDuty = Math.min(REF_DUTY, refDuty * 1.15);
+      refComfort = med < 1 / REF_UP_FPS && refDuty >= REF_DUTY - 1e-6 ? refComfort + span : 0;
+      if (refComfort > REF_UP_AFTER && now > refUpAt && s < refScaleMax() - 1e-6) {
+        refWentUp = true;
+        return rescale(Math.min(refScaleMax(), s / REF_SCALE_STEP));
+      }
+      return false;
+    }
+    refComfort = 0;
+    if (refDuty > REF_DUTY_MIN + 1e-6) { refDuty = Math.max(REF_DUTY_MIN, refDuty * 0.7); return false; }
+    if (s <= steps()[step][0] + 1e-6) return false;   // as low as the moving view's already
+    // A step up that didn't hold: don't try again for a while (longer each time).
+    if (refWentUp) { refUpAt = now + refUpWait; refUpWait *= 2; }
+    refWentUp = false;
+    return rescale(Math.max(steps()[step][0], s * REF_SCALE_STEP));
+  }
+  function rescale(to) {
+    refScale = to;
+    try { localStorage.setItem(REF_SCALE_KEY, String(refScale)); } catch (e) {}
+    // What it has so far goes into the moving view's buffer, for the new one to fade in from.
+    if (acc && refN > 0) {
+      const t = hist[histAt];
+      gl.bindFramebuffer(gl.FRAMEBUFFER, t.fb);
+      gl.useProgram(bake);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, acc.tex);
+      gl.uniform1i(BU.uAcc, 0);
+      gl.uniform2f(BU.uRes, t.w, t.h); gl.uniform2f(BU.uAccRes, acc.w, acc.h);
+      quadDraw(t.w, t.h);
+    }
+    stopRefine(); startRefine();
+    refComfort = 0;
+    return true;
+  }
+
   function startRefine() {
     const r = canvas.getBoundingClientRect();
-    const s = HI_OK ? Math.min(window.devicePixelRatio || 1, 2) : steps()[step][0];
+    const s = refScaleNow();
     const w = Math.max(16, Math.round(r.width * s)), h = Math.max(16, Math.round(r.height * s));
     if (!acc || acc.w !== w || acc.h !== h) { if (acc) acc.free(); acc = target2d(w, h, gl.RGBA32F); }
     gl.bindFramebuffer(gl.FRAMEBUFFER, acc.fb);
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
     refN = 0; refView = { ...view }; refining = true; band = 0; bands = 1; refRest = 0; bandMs = 0;
+    refFps = []; refFpsAt = performance.now() / 1000;
   }
   function stopRefine() {
     refining = false;
@@ -420,7 +499,8 @@ void main() {
   let frameInt = 1 / 60, bandMs = 0, refQueue = [];
   function refineTick(now, raw) {
     frameInt += (Math.min(Math.max(raw, 0.004), 0.1) - frameInt) * 0.1;
-    const budget = REF_DUTY * frameInt * 1000;   // ms of GPU a frame
+    if (watchFps(now, raw)) return false;   // (it's starting again, smaller)
+    const budget = refDuty * frameInt * 1000;   // ms of GPU a frame
     let done = false;
     if (timer) {
       while (refQueue.length && gl.getQueryParameter(refQueue[0], gl.QUERY_RESULT_AVAILABLE)) {
@@ -434,14 +514,14 @@ void main() {
       gl.deleteSync(refSync); refSync = null; done = true;
       const busy = now - refSubmit;
       bandMs = busy * 1000;
-      refRest = now + busy * (1 / REF_DUTY - 1);
+      refRest = now + busy * (1 / refDuty - 1);
     }
     if (refQueue.length || refSync || refN >= REF_MAX || now < refRest) return done;
     let spent = 0;
     do { sendBand(budget); spent += bandMs || budget; }
     while (timer && refN < REF_MAX && spent + (bandMs || budget) <= budget);
     // Over its share (a band bigger than a frame's): rest until the average is back to it.
-    if (timer && spent > budget) refRest = now + spent / 1000 / REF_DUTY - frameInt;
+    if (timer && spent > budget) refRest = now + spent / 1000 / refDuty - frameInt;
     return done;
   }
   function sendBand(budget) {
@@ -454,7 +534,7 @@ void main() {
     let q = null;
     if (timer) { q = gl.createQuery(); gl.beginQuery(timer.TIME_ELAPSED_EXT, q); }
     drawFractal(acc.w, acc.h, refView, 1, rad * Math.cos(th), rad * Math.sin(th));
-    if (q) { gl.endQuery(timer.TIME_ELAPSED_EXT); refQueue.push(q); }
+    if (q) { gl.endQuery(timer.TIME_ELAPSED_EXT); refQueue.push(q); gl.flush(); }
     gl.disable(gl.BLEND); gl.disable(gl.SCISSOR_TEST);
     if (!timer) { refSync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); gl.flush(); refSubmit = performance.now() / 1000; }
     if (++band < bands) return;
@@ -463,8 +543,8 @@ void main() {
     band = 0; refN++;
     if (!bandMs) return;
     const pass = bandMs * bands;
-    const want = timer ? Math.min(256, 2 ** Math.ceil(Math.log2(Math.max(1, pass / budget))))
-      : bandMs > 2.5 * frameInt * 1000 ? Math.min(256, bands * 2) : bandMs < 1.5 * frameInt * 1000 && bands > 1 ? bands / 2 : bands;
+    const want = timer ? Math.min(1024, 2 ** Math.ceil(Math.log2(Math.max(1, pass / Math.min(budget, REF_BAND_MAX_MS)))))
+      : bandMs > 2.5 * frameInt * 1000 ? Math.min(1024, bands * 2) : bandMs < 1.5 * frameInt * 1000 && bands > 1 ? bands / 2 : bands;
     if (want !== bands) { bandMs *= bands / want; bands = want; }
   }
 
@@ -626,7 +706,7 @@ void main() {
   window.UILive = {
     next() { leaving = true; fadeDir = -1; lastTouch = -1e9; },
     togglePause() { paused = !paused; if (!paused) steerT = 0; return paused; },
-    state: () => ({ fade, leaving, step, scale: steps()[step][0], still, refining, refN, refMix, bands, frames, h: view.h, minH }),
+    state: () => ({ fade, leaving, step, scale: steps()[step][0], still, refining, refN, refMix, bands, bandMs, frameInt, refDuty, refScale: refScaleNow(), acc: acc && acc.w + 'x' + acc.h, frames, h: view.h, minH }),
   };
 
   canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); cur = null; });
