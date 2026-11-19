@@ -27,7 +27,8 @@ p { margin: .5rem 0; }
 .poster { background: center / cover no-repeat; filter: blur(14px) brightness(.7); transform: scale(1.06); transition: opacity 1.2s; }
 .poster.gone { opacity: 0; }
 body.no-live .hero canvas { display: none; }
-body.no-live .poster { filter: none; transform: none; }
+body.no-live .poster { filter: none; transform: none; opacity: 1; }
+body.no-live .hero-controls { display: none; }
 .hero-text { position: absolute; left: 0; right: 0; bottom: 0; padding: 0 1rem 5.2rem; pointer-events: none;
   background: linear-gradient(to top, rgba(13,11,16,.85), rgba(13,11,16,0) 100%); padding-top: 6rem; }
 .hero-text h1 { font-size: clamp(2.6rem, 9vw, 5.5rem); font-weight: 600; margin: 0; line-height: 1; letter-spacing: -.01em; text-shadow: 0 2px 18px rgba(0,0,0,.7); }
