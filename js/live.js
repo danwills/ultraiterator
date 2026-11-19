@@ -131,6 +131,10 @@ void main() {
   const RETARGET = 4.5;        // seconds between looks for detail
   const PROBE = 40;            // the look's size, px square
   const IDLE_RESUME = 9;       // seconds after a touch before it steers itself again
+  // Rests: the dive eases to a stop now and then (after REST_EVERY s of moving) and holds still for
+  // REST_HOLD s, so the refinement gets to show; the pause pearl counts it down as after a touch.
+  const REST_EVERY = [30, 55], REST_HOLD = 30, REST_SETTLE = 3, REST_RESUME = 3;
+  const restIn = () => REST_EVERY[0] + Math.random() * (REST_EVERY[1] - REST_EVERY[0]);
   const FADE = 1.5;            // seconds to fade between fractals
   const KEEP_MAX = 0.9;        // the history's most weight: about the last ten frames
   const KEEP_DEEP = 0.75;      // ...and at the end of its depth
@@ -201,9 +205,13 @@ void main() {
   let at = 0;              // place in `order`
   let view = { x: 0, y: 0, h: 1 }, prevView = null;
   let target = { x: 0, y: 0 }, aim = { x: 0, y: 0 }, vel = { x: 0, y: 0 };
-  let startH = 1, minH = 1e-3, lastLook = 0, lastTouch = -1e9, steerT = 0, easeFor = 4;   // (easeFor: s to reach full speed)
+  let startH = 1, minH = 1e-3, lastLook = 0, steerT = 0, easeFor = 4;   // (easeFor: s to reach full speed)
+  // Held still till holdUntil (a touch, or a rest), holdLen s in all; moving for movedT s since the
+  // last rest, the next after nextRest; settleAt: when a rest began easing to a stop (or null).
+  let holdUntil = -1e9, holdLen = IDLE_RESUME, movedT = 0, nextRest = restIn(), settleAt = null;
   let fade = 0, fadeDir = 1, paused = false, leaving = false;
   let frames = 0, jitterI = 0, still = 0;
+  const READY_FRAMES = 8;   // frames blended before it fades in
   let refining = false, refN = 0, refMix = 0, refView = null, acc = null;
   let refSync = null, refSubmit = 0, refRest = 0, band = 0, bands = 1;
 
@@ -316,6 +324,7 @@ void main() {
     view = { x: 0, y: 0, h: startH };
     target = { x: 0, y: 0 }; aim = { x: 0, y: 0 }; vel = { x: 0, y: 0 };
     lastLook = performance.now() / 1000 - RETARGET + 1.0; steerT = 0; easeFor = 4;
+    holdUntil = -1e9; movedT = 0; nextRest = restIn(); settleAt = null;
     fade = 0; fadeDir = 1; leaving = false; frames = 0; still = 0; prevView = null; stopRefine(); refMix = 0;
     load(order[(at + 1) % order.length]).catch(() => {});   // the next one compiles meanwhile
   }
@@ -395,10 +404,21 @@ void main() {
     const s = steps()[step][0];
     const w = Math.max(16, Math.round(r.width * s)), h = Math.max(16, Math.round(r.height * s));
     if (sampled && sampled.w === w && sampled.h === h) return;
-    for (const t of [sampled, hist[0], hist[1]]) if (t) t.free();
+    const old = hist[histAt] || null;
+    if (sampled) sampled.free();
     sampled = target2d(w, h, gl.RGBA8);
-    hist = [target2d(w, h, floatHist ? gl.RGBA16F : gl.RGBA8), target2d(w, h, floatHist ? gl.RGBA16F : gl.RGBA8)];
-    frames = 0;
+    const fresh = [target2d(w, h, floatHist ? gl.RGBA16F : gl.RGBA8), target2d(w, h, floatHist ? gl.RGBA16F : gl.RGBA8)];
+    if (old && frames > 0) {
+      // A new size (the quality ladder): carry the old blend over, scaled, rather than starting
+      // again from one noisy sample (it flickered noisy just after the start, while it found its size).
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, old.fb);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, fresh[histAt].fb);
+      gl.blitFramebuffer(0, 0, old.w, old.h, 0, 0, w, h, gl.COLOR_BUFFER_BIT, gl.LINEAR);
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+      frames = Math.min(frames, READY_FRAMES);   // (it re-sharpens at the new size from there)
+    } else frames = 0;
+    for (const t of hist) if (t) t.free();
+    hist = fresh;
   }
 
   // Halton (2, 3): sub-pixel offsets that cover the pixel evenly.
@@ -610,9 +630,9 @@ void main() {
     const working = refining || (!canRefine && still > 0 && still < STILL_FRAMES);
     const fresh = 1 / (1 + Math.pow(n / ORBIT_HALF, 2.5));
     pausePearl._orbit = working ? { speed: ORBIT_SPEED * fresh, fresh, show: 1 - smooth(0.85, 1, prog) } : null;
-    const left = IDLE_RESUME - (performance.now() / 1000 - lastTouch);
+    const left = holdUntil - performance.now() / 1000;
     const half = !paused && left > 0;
-    pausePearl._count = half ? left / IDLE_RESUME : -1;
+    pausePearl._count = half ? left / holdLen : -1;
     pausePearl._call = half ? smooth(CALL_LEAD, 0, left) : 0;
     const mode = paused ? 'paused' : half ? 'half' : 'playing';
     if (mode !== shownMode) {
@@ -634,15 +654,25 @@ void main() {
     requestAnimationFrame(frame);
     const now = performance.now() / 1000;
     const raw = now - prev, dt = Math.min(raw, 0.1); prev = now;
-    if (!cur || !visible || document.hidden) { frames = 0; return; }
+    if (!cur || !visible || document.hidden) return;   // (the view waits too, so its blend is still good)
     showState();
     adapt(raw, now);   // (raw, uncapped: slow hardware must show as slow)
     if (!cur) return;
     resize();
-    if (!paused && now - lastTouch > IDLE_RESUME) {
-      // Ease in after a start or a touch, and out towards the end of its depth.
-      steerT += dt;
-      const ease = smooth(0, easeFor, steerT) * (0.25 + 0.75 * smooth(minH, minH * 6, view.h));
+    if (!paused && now > holdUntil) {
+      // Ease in after a start, a touch or a rest, out into a rest, and out towards the end of its depth.
+      steerT += dt; movedT += dt;
+      if (settleAt === null && movedT > nextRest && !leaving && fade >= 1 && view.h > minH * 8) settleAt = now;
+      let restEase = 1;
+      if (settleAt !== null) {
+        restEase = smooth(REST_SETTLE, 0, now - settleAt);
+        if (now - settleAt >= REST_SETTLE) {
+          settleAt = null; holdUntil = now + REST_HOLD; holdLen = REST_HOLD; movedT = 0; nextRest = restIn();
+          steerT = 0; easeFor = REST_RESUME; vel = { x: 0, y: 0 }; target = { x: view.x, y: view.y }; aim = { ...target };
+          restEase = 0;
+        }
+      }
+      const ease = smooth(0, easeFor, steerT) * (0.25 + 0.75 * smooth(minH, minH * 6, view.h)) * restEase;
       view.h *= Math.pow(2, -ZOOM_RATE * ease * dt);
       if (now - lastLook > RETARGET) { lastLook = now; look(); }
       // The aim glides to the target, and a critically damped spring follows the aim, so the
@@ -659,7 +689,9 @@ void main() {
       view.x += vel.x * view.h * dt; view.y += vel.y * view.h * dt;
       if (view.h <= minH * 1.2 && !leaving) { leaving = true; fadeDir = -1; }
     }
-    fade = Math.min(1, Math.max(0, fade + fadeDir * dt / FADE));
+    // Fading in only once the blend has a few frames (or the refinement is under way): the very
+    // first frames are single noisy samples.
+    if (fadeDir < 0 || frames >= READY_FRAMES || refining) fade = Math.min(1, Math.max(0, fade + fadeDir * dt / FADE));
     if (leaving && fade <= 0) { begin(at + 1); return; }
     const pv = prevView;
     still = pv && pv.x === view.x && pv.y === view.y && pv.h === view.h ? still + 1 : 0;
@@ -679,7 +711,7 @@ void main() {
 
   // After the hand: carry on from here, still.
   function touched() {
-    lastTouch = performance.now() / 1000;
+    holdUntil = performance.now() / 1000 + IDLE_RESUME; holdLen = IDLE_RESUME; settleAt = null;
     target = { x: view.x, y: view.y }; aim = { ...target }; vel = { x: 0, y: 0 }; steerT = 0; easeFor = 4;
   }
   // The plane under a point on the canvas (client px).
@@ -753,7 +785,7 @@ void main() {
   });
 
   window.UILive = {
-    next() { leaving = true; fadeDir = -1; lastTouch = -1e9; },
+    next() { leaving = true; fadeDir = -1; holdUntil = -1e9; settleAt = null; },
     // Straight to that one (the gallery's full-tab view), from its start.
     show(id) {
       wanted = id;
@@ -762,7 +794,7 @@ void main() {
       if (i >= 0 && !(cur && cur.pick.id === id)) begin(i);
     },
     // Play: off at once (no wait after a touch), up to speed in a second or so.
-    togglePause() { paused = !paused; if (!paused) { steerT = 0; easeFor = 1.2; lastTouch = -1e9; } return paused; },
+    togglePause() { paused = !paused; if (!paused) { steerT = 0; easeFor = 1.2; holdUntil = -1e9; settleAt = null; movedT = 0; } return paused; },
     state: () => ({ fade, leaving, step, scale: steps()[step][0], still, refining, refN, refMix, bands, bandMs, frameInt, refDuty, refScale: refScaleNow(), acc: acc && acc.w + 'x' + acc.h, frames, h: view.h, minH }),
   };
 
