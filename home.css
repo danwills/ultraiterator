@@ -24,15 +24,23 @@ p { margin: .5rem 0; }
 .hero canvas, .hero .poster { position: absolute; inset: 0; width: 100%; height: 100%; }
 .hero canvas { touch-action: pan-y; cursor: grab; display: block; }
 .hero canvas:active { cursor: grabbing; }
-.poster { background: center / cover no-repeat; filter: blur(14px) brightness(.7); transform: scale(1.06); transition: opacity 1.2s; }
+.poster { background: center / 0 0 no-repeat; transition: opacity 1.2s; }   /* (its image, set by js/live.js, shows through these two) */
+.poster::before, .poster::after { content: ''; position: absolute; inset: 0; background: inherit; }
+.poster::before { background-size: cover; filter: blur(14px) brightness(.7); transform: scale(1.06); }
+/* The render, square, at the live view's start, its sides feathered into the blurred fill. */
+.poster::after { inset: 0 auto; left: 50%; aspect-ratio: 1; transform: translateX(-50%); background-size: 100% 100%; opacity: 0; transition: opacity .6s;
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 14%, #000 86%, transparent); mask-image: linear-gradient(to right, transparent, #000 14%, #000 86%, transparent); }
 .poster.gone { opacity: 0; }
 body.no-live .hero canvas { display: none; }
-/* Waiting for a fractal to compile (js/live.js): its render, as the live one will start, and the
-   canvas cross-fading in over it when ready. */
+/* Waiting for a fractal to compile (js/live.js): its render, as the live one will start (the
+   renders are square, so over the blurred one, which fills the sides), and the canvas
+   cross-fading in over it when ready. */
 .hero canvas { transition: opacity 1s ease; }
 body.waiting .hero canvas { opacity: 0; transition: opacity .3s ease; }
-body.waiting .poster { filter: none; transform: none; background-size: auto 100%; opacity: 1; transition: opacity .6s; }
-body.no-live .poster { filter: none; transform: none; opacity: 1; }
+body.waiting .poster { opacity: 1; transition: opacity .6s; }
+body.waiting .poster::after { opacity: 1; }
+body.no-live .poster { opacity: 1; }
+body.no-live .poster::before { filter: none; transform: none; }
 body.no-live .hero-controls { display: none; }
 .hero-text { position: absolute; left: 0; right: 0; bottom: 0; padding: 0 1rem 5.2rem; pointer-events: none;
   background: linear-gradient(to top, rgba(13,11,16,.85), rgba(13,11,16,0) 100%); padding-top: 6rem; }
