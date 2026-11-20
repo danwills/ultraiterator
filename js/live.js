@@ -134,6 +134,21 @@ void main() {
   // Rests: the dive eases to a stop now and then (after REST_EVERY s of moving) and holds still for
   // REST_HOLD s, so the refinement gets to show; the pause pearl counts it down as after a touch.
   const REST_EVERY = [15, 30], REST_HOLD = 20, REST_SETTLE = 3, REST_RESUME = 3;
+  // A word under the pause pearl as a rest begins and ends.
+  const sayEl = document.getElementById('live-say'), SAY_FOR = 3.5;
+  let sayTimer = 0, restHolding = false;
+  function say(text) {
+    if (!sayEl) return;
+    const pp = document.getElementById('pause-pearl'), box = sayEl.parentElement;
+    if (pp && box) sayEl.style.right = (box.clientWidth - pp.offsetLeft - pp.offsetWidth) + 'px';   // (under the pearl, its right edges level)
+    sayEl.textContent = text; sayEl.classList.add('on');
+    clearTimeout(sayTimer); sayTimer = setTimeout(() => sayEl.classList.remove('on'), SAY_FOR * 1000);
+  }
+  function onWeGo() {
+    let n = 0;
+    try { n = (parseInt(localStorage.getItem('ultraiterator-resumes'), 10) || 0) + 1; localStorage.setItem('ultraiterator-resumes', n); } catch (e) { n = (onWeGo.n = (onWeGo.n || 0) + 1); }
+    say(n % 20 === 0 ? "on y'va" : 'on we go');
+  }
   const restIn = () => REST_EVERY[0] + Math.random() * (REST_EVERY[1] - REST_EVERY[0]);
   const FADE = 1.5;            // seconds to fade between fractals
   const KEEP_MAX = 0.9;        // the history's most weight: about the last ten frames
@@ -324,7 +339,7 @@ void main() {
     view = { x: 0, y: 0, h: startH };
     target = { x: 0, y: 0 }; aim = { x: 0, y: 0 }; vel = { x: 0, y: 0 };
     lastLook = performance.now() / 1000 - RETARGET + 1.0; steerT = 0; easeFor = 4;
-    holdUntil = -1e9; movedT = 0; nextRest = restIn(); settleAt = null;
+    holdUntil = -1e9; movedT = 0; nextRest = restIn(); settleAt = null; restHolding = false;
     fade = 0; fadeDir = 1; leaving = false; frames = 0; still = 0; prevView = null; stopRefine(); refMix = 0;
     load(order[(at + 1) % order.length]).catch(() => {});   // the next one compiles meanwhile
   }
@@ -659,6 +674,7 @@ void main() {
     adapt(raw, now);   // (raw, uncapped: slow hardware must show as slow)
     if (!cur) return;
     resize();
+    if (restHolding && !paused && now > holdUntil) { restHolding = false; onWeGo(); }
     if (!paused && now > holdUntil) {
       // Ease in after a start, a touch or a rest, out into a rest, and out towards the end of its depth.
       steerT += dt; movedT += dt;
@@ -669,7 +685,7 @@ void main() {
         if (now - settleAt >= REST_SETTLE) {
           settleAt = null; holdUntil = now + REST_HOLD; holdLen = REST_HOLD; movedT = 0; nextRest = restIn();
           steerT = 0; easeFor = REST_RESUME; vel = { x: 0, y: 0 }; target = { x: view.x, y: view.y }; aim = { ...target };
-          restEase = 0;
+          restEase = 0; restHolding = true; say('resting and refining');
         }
       }
       const ease = smooth(0, easeFor, steerT) * (0.25 + 0.75 * smooth(minH, minH * 6, view.h)) * restEase;
@@ -711,7 +727,7 @@ void main() {
 
   // After the hand: carry on from here, still.
   function touched() {
-    holdUntil = performance.now() / 1000 + IDLE_RESUME; holdLen = IDLE_RESUME; settleAt = null;
+    holdUntil = performance.now() / 1000 + IDLE_RESUME; holdLen = IDLE_RESUME; settleAt = null; restHolding = false;
     target = { x: view.x, y: view.y }; aim = { ...target }; vel = { x: 0, y: 0 }; steerT = 0; easeFor = 4;
   }
   // The plane under a point on the canvas (client px).
@@ -785,7 +801,7 @@ void main() {
   });
 
   window.UILive = {
-    next() { leaving = true; fadeDir = -1; holdUntil = -1e9; settleAt = null; },
+    next() { leaving = true; fadeDir = -1; holdUntil = -1e9; settleAt = null; restHolding = false; },
     // Straight to that one (the gallery's full-tab view), from its start.
     show(id) {
       wanted = id;
@@ -794,7 +810,7 @@ void main() {
       if (i >= 0 && !(cur && cur.pick.id === id)) begin(i);
     },
     // Play: off at once (no wait after a touch), up to speed in a second or so.
-    togglePause() { paused = !paused; if (!paused) { steerT = 0; easeFor = 1.2; holdUntil = -1e9; settleAt = null; movedT = 0; } return paused; },
+    togglePause() { paused = !paused; restHolding = false; if (!paused) { steerT = 0; easeFor = 1.2; holdUntil = -1e9; settleAt = null; movedT = 0; } return paused; },
     state: () => ({ fade, leaving, step, scale: steps()[step][0], still, refining, refN, refMix, bands, bandMs, frameInt, refDuty, refScale: refScaleNow(), acc: acc && acc.w + 'x' + acc.h, frames, h: view.h, minH }),
   };
 
