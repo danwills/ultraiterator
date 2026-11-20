@@ -15,7 +15,7 @@ p { margin: .5rem 0; }
 .muted { color: var(--muted); font-size: .9rem; }
 
 /* The gems' canvas: over everything, letting touches through; each .gem's text sits above it. */
-#gems { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 5; }
+#gems { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
 .gem { position: relative; z-index: 6; }
 .gem > * { position: relative; z-index: 7; }
 
@@ -50,7 +50,7 @@ body.no-live .hero-controls { display: none; }
 .hero-text .stage-row { margin: .8rem 0 .1rem; }
 .hero-text .stage { font-size: .85rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #142029; margin: 0; }
 body:not(.gems) .hero-text .stage { background: #93b4c9; }
-.hero-text .tagline { margin: .4rem 0 0; font-size: clamp(1.05rem, 3vw, 1.35rem); color: #f4ead9; text-shadow: 0 1px 10px rgba(0,0,0,.9); max-width: 34rem; }
+.hero-text .tagline { margin: .7rem 0 0; font-size: clamp(1.05rem, 3vw, 1.35rem); color: #f4ead9; text-shadow: 0 1px 10px rgba(0,0,0,.9); max-width: 34rem; }
 .hero-controls { position: absolute; right: 1rem; top: 1rem; display: flex; gap: .7rem; z-index: 6; }
 .hero-controls button { width: 52px; height: 52px; border: 0; background: transparent; color: #fff; font-size: 20px; font-family: inherit; cursor: pointer; padding: 0; border-radius: 50%; }
 .live-say { position: absolute; top: calc(100% + .4rem); right: 0; white-space: nowrap; font-size: .72rem; font-weight: 300; letter-spacing: .02em;

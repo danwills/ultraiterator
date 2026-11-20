@@ -404,20 +404,23 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
     requestAnimationFrame(frame);
     const dt = Math.min((now - prev) / 1000, 0.1); prev = now;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const W = Math.round(window.innerWidth * dpr), H = Math.round(window.innerHeight * dpr);
+    // Sized and placed by the canvas's own box (on Android Chrome 100vh was the height without the
+    // address bar while innerHeight was with it, so the drawing stretched and sat low under its text).
+    const cr = canvas.getBoundingClientRect();
+    const W = Math.round(cr.width * dpr), H = Math.round(cr.height * dpr);
     if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
     let n = 0;
     for (const el of els) {
       if (n >= MAX) break;
       const r = el.getBoundingClientRect();
-      if (r.bottom < -20 || r.top > window.innerHeight + 20 || r.width === 0) continue;
+      if (r.bottom < cr.top - 20 || r.top > cr.bottom + 20 || r.width === 0) continue;
       const kind = el.dataset.gem === 'pearl' ? 1 : 0;
       const look = LOOKS[el.dataset.look] ?? (kind ? 10 : 0);
       const seed = parseFloat(el.dataset.seed || (n * 1.37 + 0.5));
       let h = hover.get(el) || 0;
       h += ((el._over ? 1 : 0) - h) * (1 - Math.exp(-dt * 8));
       hover.set(el, h);
-      rects.set([(r.left + r.width / 2) * dpr, (r.top + r.height / 2) * dpr, r.width / 2 * dpr, r.height / 2 * dpr], n * 4);
+      rects.set([(r.left - cr.left + r.width / 2) * dpr, (r.top - cr.top + r.height / 2) * dpr, r.width / 2 * dpr, r.height / 2 * dpr], n * 4);
       kinds.set([kind, look, seed, h], n * 4);
       // (its glow eases, so steps in progress read as a smooth brightening)
       el._glowShown = (el._glowShown ?? (el._glow || 0)) + ((el._glow || 0) - (el._glowShown ?? 0)) * (1 - Math.exp(-dt * 3));
