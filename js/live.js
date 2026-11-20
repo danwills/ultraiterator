@@ -170,7 +170,7 @@ void main() {
 }`;
 
   const ZOOM_RATE = 0.3;       // octaves a second (quicker since the rests show it sharp; was 0.085, 0.13, 0.2)
-  const TURN_MAX = 0.015;      // the most it turns, radians a second (~0.9°; ~0.6° a second on average)
+  const TURN_MAX = 0.025;      // the most it turns, radians a second (~1.4°; ~1° a second on average; was 0.015)
   let turnT = 0, turnPh = Math.random() * 6.283, turnSteer = 0;   // (turnSteer: s since a start or a touch)
   // Its rate, radians a second, at turn time t: a low, signed noise (two slow sines).
   const turnRate = (t, ease) => TURN_MAX * ease * (0.6 * Math.sin(0.043 * t + turnPh) + 0.4 * Math.sin(0.0187 * t + 2.1 * turnPh));
@@ -618,7 +618,7 @@ void main() {
     let w = Math.max(16, Math.round(r.width * s)), h = Math.max(16, Math.round(r.height * s));
     // In a rest the view keeps turning, so it refines a little more all round: enough for the turn
     // the rest of the hold will make (worked out ahead, the noise being known), and the screen just
-    // reads it turned. ~8° at the most, a third more pixels for a wide screen.
+    // reads it turned. ~14° at the most, about half as many pixels again for a wide screen.
     let ang = 0;
     if (restHolding && !paused) {
       const now = performance.now() / 1000, ease = turnEase();
