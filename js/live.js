@@ -105,19 +105,23 @@ uniform vec2 uRot, uRefRot, uHistRot;
 uniform bool uSmooth;      // the refinement's turned under the view (a rest): read it bilinearly
 out vec4 frag;
 vec2 uiTurn(vec2 r, vec2 p) { return vec2(r.x * p.x - r.y * p.y, r.y * p.x + r.x * p.y); }   // p turned by r = (cos, sin)
-// The blend, enlarged to the screen by Catmull-Rom (9 bilinear taps) rather than bilinear, which
-// showed its pixel grid at the lower render scales.
+// The blend, enlarged to the screen by a Mitchell-Netravali cubic (B = C = 1/3, 16 taps): bilinear
+// showed its pixel grid at the lower render scales, and so did Catmull-Rom wherever the scale's
+// not a whole number (measured at 0.4: axis-aligned energy 48x the diagonal's; Mitchell 4.5x).
+float mitchell(float x) {
+    x = abs(x);
+    return x < 1.0 ? (7.0 * x * x * x - 12.0 * x * x + 16.0 / 3.0) / 6.0
+         : x < 2.0 ? (-7.0 / 3.0 * x * x * x + 12.0 * x * x - 20.0 * x + 32.0 / 3.0) / 6.0 : 0.0;
+}
 vec3 blendAt(vec2 uv) {
     if (uHistRes.y >= uRes.y) return texture(uTex, uv).rgb;
-    vec2 p = uv * uHistRes, tc = floor(p - 0.5) + 0.5, f = p - tc;
-    vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f)), w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
-    vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f)), w3 = f * f * (-0.5 + 0.5 * f);
-    vec2 w12 = w1 + w2, t12 = (tc + w2 / w12) / uHistRes, t0 = (tc - 1.0) / uHistRes, t3 = (tc + 2.0) / uHistRes;
-    vec2 tx[3] = vec2[3](vec2(t0.x, w0.x), vec2(t12.x, w12.x), vec2(t3.x, w3.x));
-    vec2 ty[3] = vec2[3](vec2(t0.y, w0.y), vec2(t12.y, w12.y), vec2(t3.y, w3.y));
-    vec3 c = vec3(0.0);
-    for (int j = 0; j < 3; j++) for (int i = 0; i < 3; i++) c += texture(uTex, vec2(tx[i].x, ty[j].x)).rgb * tx[i].y * ty[j].y;
-    return max(c, 0.0);
+    vec2 p = uv * uHistRes - 0.5, b = floor(p), f = p - b;
+    vec3 c = vec3(0.0); float ws = 0.0;
+    for (int j = -1; j <= 2; j++) for (int i = -1; i <= 2; i++) {
+        float w = mitchell(float(i) - f.x) * mitchell(float(j) - f.y);
+        c += texelFetch(uTex, clamp(ivec2(b) + ivec2(i, j), ivec2(0), ivec2(uHistRes) - 1), 0).rgb * w; ws += w;
+    }
+    return max(c / ws, 0.0);
 }
 // The sums and counts both blend linearly, so a bilinear read of each (by hand: float textures
 // needn't filter) still divides out to a proper average.
