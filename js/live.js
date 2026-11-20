@@ -220,10 +220,14 @@ void main() {
   const SETTLE_PX = 48;
   let restWhy = '', restRate = 0, restWaiting = false, restAt = 0, settleRead = null, settleReadAt = 0, settleReadN = 0, settleReads = 0, refAng = 0;
   const settlePx = new Float32Array(SETTLE_PX * SETTLE_PX * 4);
+  // The end of its depth always gets a rest (Dan: "heaps of zooms seem to end and go to the next
+  // fractal instead of rendering a nice deep-zoom"): it settles there, at END_REST_AT x its least
+  // height, refines as any rest does, then fades to the next fractal still holding the refined view.
+  const END_REST_AT = 1.5;
   const REST_LEAD = 5;         // seconds of moving the pause pearl shows a rest coming (and then its settling)
   // A word under the pause pearl as a rest begins and ends.
   const sayEl = document.getElementById('live-say'), SAY_FOR = 3.5;
-  let sayTimer = 0, restHolding = false;
+  let sayTimer = 0, restHolding = false, endRest = false, ended = false;   // (endRest: this rest's the depth's end; ended: done, fading out still)
   function say(text) {
     if (!sayEl) return;
     const pp = document.getElementById('pause-pearl'), box = sayEl.parentElement;
@@ -452,7 +456,7 @@ void main() {
     target = { x: 0, y: 0 }; aim = { x: 0, y: 0 }; vel = { x: 0, y: 0 };
     lastLook = performance.now() / 1000 - RETARGET + 1.0; steerT = 0; easeFor = 4; turnSteer = 0;
     // (the first rest a quarter of the usual way in, as if it had joined a cycle partway through)
-    holdUntil = -1e9; movedT = 0; nextRest = restIn() / 4; settleAt = null; restHolding = false; restWaiting = false;
+    holdUntil = -1e9; movedT = 0; nextRest = restIn() / 4; settleAt = null; restHolding = false; restWaiting = false; endRest = false; ended = false;
     fade = 0; fadeDir = 1; leaving = false; frames = 0; still = 0; prevView = null; stopRefine(); refMix = 0;
     if (document.body.classList.contains('waiting')) fade = 1;   // (the canvas's own opacity does the cross-fade)
     load(order[(at + 1) % order.length]).catch(() => {});   // the next one compiles meanwhile
@@ -881,8 +885,11 @@ void main() {
     // A rest on its way: the ring fills in over its last REST_LEAD s of moving and its settling, so
     // it's full as the rest begins and runs down from there (sent as -1 - fill).
     let coming = 0;
-    if (!paused && !half && !leaving && fade >= 1 && view.h > minH * 8) {
-      const tLeft = settleAt === null ? nextRest - movedT + REST_SETTLE : REST_SETTLE - (performance.now() / 1000 - settleAt);
+    if (!paused && !half && !leaving && fade >= 1 && (view.h > minH * 8 || !endRest || settleAt !== null)) {
+      // (The depth's end: the zoom's time to END_REST_AT, roughly, as it eases down towards it.)
+      const easeAt = h => 0.25 + 0.75 * smooth(minH, minH * 6, h);
+      const toEnd = endRest ? 1e9 : Math.log2(view.h / (minH * END_REST_AT)) / (ZOOM_RATE * 0.5 * (easeAt(view.h) + easeAt(minH * END_REST_AT)));
+      const tLeft = settleAt === null ? Math.min(view.h > minH * 8 ? nextRest - movedT : 1e9, toEnd) + REST_SETTLE : REST_SETTLE - (performance.now() / 1000 - settleAt);
       const fill = 1 - tLeft / (REST_LEAD + REST_SETTLE);
       if (fill > 0) { pausePearl._count = -1 - Math.min(1, fill); coming = fill; }
     }
@@ -923,11 +930,14 @@ void main() {
     adapt(raw, now);   // (raw, uncapped: slow hardware must show as slow)
     if (!cur) return;
     resize();
-    if (restHolding && !paused && now > holdUntil) { restHolding = false; onWeGo(); }
-    if (!paused && now > holdUntil) {
+    if (restHolding && !paused && now > holdUntil) { restHolding = false; if (endRest) { ended = true; leaving = true; fadeDir = -1; } else onWeGo(); }
+    if (!paused && now > holdUntil && !ended) {
       // Ease in after a start, a touch or a rest, out into a rest, and out towards the end of its depth.
       steerT += dt; movedT += dt;
-      if (settleAt === null && movedT > nextRest && !leaving && fade >= 1 && view.h > minH * 8) settleAt = now;
+      if (settleAt === null && !leaving && fade >= 1) {
+        if (!endRest && view.h <= minH * END_REST_AT) { settleAt = now; endRest = true; }
+        else if (movedT > nextRest && view.h > minH * 8) settleAt = now;
+      }
       let restEase = 1;
       if (settleAt !== null) {
         restEase = smooth(REST_SETTLE, 0, now - settleAt);
@@ -939,7 +949,7 @@ void main() {
         }
       }
       const ease = smooth(0, easeFor, steerT) * (0.25 + 0.75 * smooth(minH, minH * 6, view.h)) * restEase;
-      view.h *= Math.pow(2, -ZOOM_RATE * ease * dt);
+      view.h = Math.max(minH, view.h * Math.pow(2, -ZOOM_RATE * ease * dt));
       if (now - lastLook > RETARGET) { lastLook = now; look(); }
       // The aim glides to the target, and a critically damped spring follows the aim, so the
       // drift's speed and direction both change smoothly (no kinks when the target moves).
@@ -954,7 +964,7 @@ void main() {
       if (sp > cap) { vel.x *= cap / sp; vel.y *= cap / sp; }
       view.x += vel.x * view.h * dt; view.y += vel.y * view.h * dt;
       turn(dt);
-      if (view.h <= minH * 1.2 && !leaving) { leaving = true; fadeDir = -1; }
+      if (view.h <= minH * 1.2 && !leaving && !endRest) { leaving = true; fadeDir = -1; }
     } else if (restHolding && !paused) turn(dt);   // (a rest only stops the dive: the refinement's read turned)
     // Fading in only once the blend has a few frames (or the refinement is under way): the very
     // first frames are single noisy samples.
@@ -1013,6 +1023,9 @@ void main() {
   // After the hand: carry on from here, still.
   function touched() {
     holdUntil = performance.now() / 1000 + IDLE_RESUME; holdLen = IDLE_RESUME; settleAt = null; restHolding = false; restWaiting = false;
+    // (At the depth's end: a touch keeps it here, and it rests there again before it moves on.)
+    if (ended) { ended = false; leaving = false; fadeDir = 1; }
+    endRest = false;
     target = { x: view.x, y: view.y }; aim = { ...target }; vel = { x: 0, y: 0 }; steerT = 0; easeFor = 4; turnSteer = 0;
   }
   // The plane under a point on the canvas (client px).
@@ -1098,8 +1111,8 @@ void main() {
       if (i >= 0 && !(cur && cur.pick.id === id)) { if (starting) queued = i; else begin(i); }
     },
     // Play: off at once (no wait after a touch), up to speed in a second or so.
-    togglePause() { paused = !paused; restHolding = false; restWaiting = false; if (!paused) { steerT = 0; easeFor = 1.2; holdUntil = -1e9; settleAt = null; movedT = 0; } return paused; },
-    state: () => ({ restWhy, restRate, rest: restHolding ? (restWaiting ? 'settling' : 'ending') : '', restFor: restHolding ? +(performance.now() / 1000 - restAt).toFixed(1) : 0, fade, leaving, step, scale: steps()[step][0], still, refining, refN, refMix, bands, bandMs, frameInt, refDuty, refScale: refScaleNow(), acc: acc && acc.w + 'x' + acc.h, frames, h: view.h, a: view.a, minH }),
+    togglePause() { paused = !paused; restHolding = false; restWaiting = false; endRest = false; if (ended) { ended = false; leaving = false; fadeDir = 1; } if (!paused) { steerT = 0; easeFor = 1.2; holdUntil = -1e9; settleAt = null; movedT = 0; } return paused; },
+    state: () => ({ endRest, ended, restWhy, restRate, rest: restHolding ? (restWaiting ? 'settling' : 'ending') : '', restFor: restHolding ? +(performance.now() / 1000 - restAt).toFixed(1) : 0, fade, leaving, step, scale: steps()[step][0], still, refining, refN, refMix, bands, bandMs, frameInt, refDuty, refScale: refScaleNow(), acc: acc && acc.w + 'x' + acc.h, frames, h: view.h, a: view.a, minH }),
   };
 
   canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); cur = null; });
