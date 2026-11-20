@@ -96,21 +96,34 @@ uniform sampler2D uAcc;    // the refinement: colour sums, and their count in al
 uniform float uFade, uRefMix;
 uniform float uSeed;       // the moving view's picture counts as this many samples in the refinement
 uniform vec2 uRes, uAccRes;
-uniform vec3 uView, uRefView;
-uniform vec2 uRot, uRefRot;
+uniform vec3 uView, uRefView, uHistView;
+uniform vec2 uRot, uRefRot, uHistRot;
+uniform bool uSmooth;      // the refinement's turned under the view (a rest): read it bilinearly
 out vec4 frag;
 vec2 uiTurn(vec2 r, vec2 p) { return vec2(r.x * p.x - r.y * p.y, r.y * p.x + r.x * p.y); }   // p turned by r = (cos, sin)
+// The sums and counts both blend linearly, so a bilinear read of each (by hand: float textures
+// needn't filter) still divides out to a proper average.
+vec4 accAt(vec2 pf) {
+    if (!uSmooth) return texelFetch(uAcc, ivec2(pf), 0);
+    vec2 p = pf - 0.5, t = fract(p);
+    ivec2 i = ivec2(floor(p)), hi = ivec2(uAccRes) - 1;
+    ivec2 i0 = clamp(i, ivec2(0), hi), i1 = clamp(i + 1, ivec2(0), hi);
+    return mix(mix(texelFetch(uAcc, i0, 0), texelFetch(uAcc, ivec2(i1.x, i0.y), 0), t.x),
+               mix(texelFetch(uAcc, ivec2(i0.x, i1.y), 0), texelFetch(uAcc, i1, 0), t.x), t.y);
+}
 void main() {
     // The outermost EDGE px all round are left off (stretching the rest over them): the blend's
     // edge pixels have the least history and sparkled.
     const float EDGE = 3.0;
     vec2 f = mix(vec2(EDGE), uRes - EDGE, gl_FragCoord.xy / uRes);
-    vec3 c = texture(uTex, f / uRes).rgb;
+    vec2 o = uView.xy + uiTurn(uRot, (f - 0.5 * uRes) * (uView.z / uRes.y));
+    // The blend, where its view was (it waits while refining, as the view turns on in a rest).
+    vec2 hq = uiTurn(uHistRot * vec2(1.0, -1.0), o - uHistView.xy) / uHistView.z;
+    vec3 c = texture(uTex, vec2(hq.x * uRes.y / uRes.x, hq.y) + 0.5).rgb;
     if (uRefMix > 0.0) {
-        vec2 o = uView.xy + uiTurn(uRot, (f - 0.5 * uRes) * (uView.z / uRes.y));
         vec2 pf = uiTurn(uRefRot * vec2(1.0, -1.0), o - uRefView.xy) * (uAccRes.y / uRefView.z) + 0.5 * uAccRes;
         if (all(greaterThanEqual(pf, vec2(0.0))) && all(lessThan(pf, uAccRes))) {
-            vec4 a = texelFetch(uAcc, ivec2(pf), 0);
+            vec4 a = accAt(pf);
             // From the first sample on: the moving view's picture, worth uSeed samples, and the
             // refinement's, so it improves at once and smoothly takes over.
             c = mix(c, (c * uSeed + a.rgb) / (uSeed + a.a), uRefMix);
@@ -123,21 +136,29 @@ void main() {
     frag = vec4(c * uFade * v, 1.0);
 }`;
 
-  // The refinement so far, as a picture, into the moving view's buffer: what a refinement started
-  // again at another resolution fades in from (rather than back from the blurrier moving view).
+  // The refinement so far, as a picture, into the moving view's buffer (at the view as it is now):
+  // what a refinement started again at another resolution fades in from (rather than back from
+  // the blurrier moving view), and what the moving view carries on from after a rest.
   const BAKE_FS = `#version 300 es
 precision highp float;
 uniform sampler2D uAcc;
 uniform vec2 uRes, uAccRes;
+uniform vec3 uView, uRefView;
+uniform vec2 uRot, uRefRot;
 out vec4 frag;
+vec2 uiTurn(vec2 r, vec2 p) { return vec2(r.x * p.x - r.y * p.y, r.y * p.x + r.x * p.y); }   // p turned by r = (cos, sin)
 void main() {
-    vec4 a = texelFetch(uAcc, ivec2(gl_FragCoord.xy / uRes * uAccRes), 0);
+    vec2 o = uView.xy + uiTurn(uRot, (gl_FragCoord.xy - 0.5 * uRes) * (uView.z / uRes.y));
+    vec2 pf = uiTurn(uRefRot * vec2(1.0, -1.0), o - uRefView.xy) * (uAccRes.y / uRefView.z) + 0.5 * uAccRes;
+    vec4 a = texelFetch(uAcc, clamp(ivec2(pf), ivec2(0), ivec2(uAccRes) - 1), 0);
     frag = vec4(a.a > 0.0 ? a.rgb / a.a : vec3(0.0), 1.0);
 }`;
 
   const ZOOM_RATE = 0.13;      // octaves a second (quicker since the rests show it sharp; was 0.085)
   const TURN_MAX = 0.015;      // the most it turns, radians a second (~0.9°; ~0.6° a second on average)
-  let turnT = 0, turnPh = Math.random() * 6.283;
+  let turnT = 0, turnPh = Math.random() * 6.283, turnSteer = 0;   // (turnSteer: s since a start or a touch)
+  // Its rate, radians a second, at turn time t: a low, signed noise (two slow sines).
+  const turnRate = (t, ease) => TURN_MAX * ease * (0.6 * Math.sin(0.043 * t + turnPh) + 0.4 * Math.sin(0.0187 * t + 2.1 * turnPh));
   const DRIFT_MAX = 0.045;     // the most it drifts sideways, in screen heights a second
   const RETARGET = 4.5;        // seconds between looks for detail
   const PROBE = 40;            // the look's size, px square
@@ -240,7 +261,7 @@ void main() {
   let fade = 0, fadeDir = 1, paused = false, leaving = false;
   let frames = 0, jitterI = 0, still = 0;
   const READY_FRAMES = 8;   // frames blended before it fades in
-  let refining = false, refN = 0, refMix = 0, refView = null, acc = null;
+  let refining = false, refN = 0, refMix = 0, refView = null, acc = null, refTurns = false;
   let refSync = null, refSubmit = 0, refRest = 0, band = 0, bands = 1;
 
   const quad = gl.createBuffer();
@@ -294,9 +315,9 @@ void main() {
   }
   function uniforms(p, names) { const u = {}; for (const n of names) u[n] = gl.getUniformLocation(p, n); return u; }
   const resolve = link(RESOLVE_FS).p, show = link(SHOW_FS).p, bake = link(BAKE_FS).p;
-  const BU = uniforms(bake, ['uAcc', 'uRes', 'uAccRes']);
+  const BU = uniforms(bake, ['uAcc', 'uRes', 'uAccRes', 'uView', 'uRefView', 'uRot', 'uRefRot']);
   const RU = uniforms(resolve, ['uCur', 'uHist', 'uRes', 'uView', 'uPrev', 'uKeep', 'uClip', 'uRot', 'uPrevRot']);
-  const SU = uniforms(show, ['uTex', 'uAcc', 'uFade', 'uRefMix', 'uSeed', 'uRes', 'uAccRes', 'uView', 'uRefView', 'uRot', 'uRefRot']);
+  const SU = uniforms(show, ['uTex', 'uAcc', 'uFade', 'uRefMix', 'uSeed', 'uRes', 'uAccRes', 'uView', 'uRefView', 'uRot', 'uRefRot', 'uHistView', 'uHistRot', 'uSmooth']);
 
   // Its gradients: the PNG's top half, UF's rows (the bottom half is the same in linear light).
   async function gradient(id) {
@@ -369,7 +390,7 @@ void main() {
     minH = Math.max(startH / 4096, screenPx * PRECISION_MARGIN / (2048 * pick.depth));
     view = { x: 0, y: 0, h: startH, a: 0 };
     target = { x: 0, y: 0 }; aim = { x: 0, y: 0 }; vel = { x: 0, y: 0 };
-    lastLook = performance.now() / 1000 - RETARGET + 1.0; steerT = 0; easeFor = 4;
+    lastLook = performance.now() / 1000 - RETARGET + 1.0; steerT = 0; easeFor = 4; turnSteer = 0;
     // (the first rest a quarter of the usual way in, as if it had joined a cycle partway through)
     holdUntil = -1e9; movedT = 0; nextRest = restIn() / 4; settleAt = null; restHolding = false;
     fade = 0; fadeDir = 1; leaving = false; frames = 0; still = 0; prevView = null; stopRefine(); refMix = 0;
@@ -545,28 +566,45 @@ void main() {
     refScale = to;
     try { localStorage.setItem(REF_SCALE_KEY, String(refScale)); } catch (e) {}
     // What it has so far goes into the moving view's buffer, for the new one to fade in from.
-    if (acc && refN > 0) {
-      const t = hist[histAt];
-      gl.bindFramebuffer(gl.FRAMEBUFFER, t.fb);
-      gl.useProgram(bake);
-      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, acc.tex);
-      gl.uniform1i(BU.uAcc, 0);
-      gl.uniform2f(BU.uRes, t.w, t.h); gl.uniform2f(BU.uAccRes, acc.w, acc.h);
-      quadDraw(t.w, t.h);
-    }
+    if (acc && refN > 0) bakeRefined();
     stopRefine(); startRefine();
     refComfort = 0;
     return true;
   }
 
+  function bakeRefined() {
+    const t = hist[histAt];
+    gl.bindFramebuffer(gl.FRAMEBUFFER, t.fb);
+    gl.useProgram(bake);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, acc.tex);
+    gl.uniform1i(BU.uAcc, 0);
+    gl.uniform2f(BU.uRes, t.w, t.h); gl.uniform2f(BU.uAccRes, acc.w, acc.h);
+    gl.uniform3f(BU.uView, view.x, view.y, view.h); gl.uniform3f(BU.uRefView, refView.x, refView.y, refView.h);
+    gl.uniform2f(BU.uRot, Math.cos(view.a), Math.sin(view.a)); gl.uniform2f(BU.uRefRot, Math.cos(refView.a), Math.sin(refView.a));
+    quadDraw(t.w, t.h);
+    prevView = { ...view };   // (the buffer's view now)
+  }
+
   function startRefine() {
     const r = canvas.getBoundingClientRect();
     const s = refScaleNow();
-    const w = Math.max(16, Math.round(r.width * s)), h = Math.max(16, Math.round(r.height * s));
+    let w = Math.max(16, Math.round(r.width * s)), h = Math.max(16, Math.round(r.height * s));
+    // In a rest the view keeps turning, so it refines a little more all round: enough for the turn
+    // the rest of the hold will make (worked out ahead, the noise being known), and the screen just
+    // reads it turned. ~8° at the most, a third more pixels for a wide screen.
+    let ang = 0;
+    if (restHolding && !paused) {
+      const now = performance.now() / 1000, ease = turnEase();
+      for (let t = 0, T = Math.max(0, holdUntil - now) + 0.5; t < T; t += 0.1) ang += turnRate(turnT + t, ease) * 0.1;
+      ang = Math.min(0.5, Math.abs(ang) * 1.15 + 0.002);
+    }
+    refTurns = ang > 0;
+    const c = Math.cos(ang), sn = Math.sin(ang), h0 = h;
+    [w, h] = [Math.ceil(w * c + h * sn), Math.ceil(w * sn + h * c)];
     if (!acc || acc.w !== w || acc.h !== h) { if (acc) acc.free(); acc = target2d(w, h, gl.RGBA32F); }
     gl.bindFramebuffer(gl.FRAMEBUFFER, acc.fb);
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
-    refN = 0; refView = { ...view }; refining = true; refStartT = performance.now() / 1000; band = 0; bands = 1; refRest = 0; bandMs = 0;
+    refN = 0; refView = { ...view, h: view.h * h / h0 }; refining = true; refStartT = performance.now() / 1000; band = 0; bands = 1; refRest = 0; bandMs = 0;
     refFps = []; refFpsAt = performance.now() / 1000;
   }
   function stopRefine() {
@@ -665,6 +703,10 @@ void main() {
     gl.uniform3f(SU.uRefView, rv.x, rv.y, rv.h);
     gl.uniform2f(SU.uRot, Math.cos(view.a), Math.sin(view.a));
     gl.uniform2f(SU.uRefRot, Math.cos(rv.a), Math.sin(rv.a));
+    const hv = prevView || view;   // (the blend's view: renderTaa's last)
+    gl.uniform3f(SU.uHistView, hv.x, hv.y, hv.h);
+    gl.uniform2f(SU.uHistRot, Math.cos(hv.a), Math.sin(hv.a));
+    gl.uniform1i(SU.uSmooth, refTurns ? 1 : 0);
     quadDraw(w, h);
   }
 
@@ -706,6 +748,10 @@ void main() {
   document.addEventListener('visibilitychange', () => { prev = performance.now() / 1000; frameTimes = []; });
   new IntersectionObserver(es => { visible = es[0].isIntersecting; }).observe(canvas);
 
+  // A very slow turn, its way and speed a low, signed noise. Eased in after a start or a touch and
+  // towards the end of its depth, but not into the rests: it turns on through them.
+  const turnEase = () => smooth(0, 4, turnSteer) * (0.25 + 0.75 * smooth(minH, minH * 6, view.h));
+  function turn(dt) { turnT += dt; turnSteer += dt; view.a += turnRate(turnT, turnEase()) * dt; }
   const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
   let prev = performance.now() / 1000;
   function frame() {
@@ -746,22 +792,20 @@ void main() {
       const sp = Math.hypot(vel.x, vel.y), cap = DRIFT_MAX * ease + 1e-6;
       if (sp > cap) { vel.x *= cap / sp; vel.y *= cap / sp; }
       view.x += vel.x * view.h * dt; view.y += vel.y * view.h * dt;
-      // A very slow turn, its way and speed a low, signed noise (two slow sines), eased like the rest.
-      turnT += dt;
-      view.a += TURN_MAX * ease * (0.6 * Math.sin(0.043 * turnT + turnPh) + 0.4 * Math.sin(0.0187 * turnT + 2.1 * turnPh)) * dt;
+      turn(dt);
       if (view.h <= minH * 1.2 && !leaving) { leaving = true; fadeDir = -1; }
-    }
+    } else if (restHolding && !paused) turn(dt);   // (a rest only stops the dive: the refinement's read turned)
     // Fading in only once the blend has a few frames (or the refinement is under way): the very
     // first frames are single noisy samples.
     if (fadeDir < 0 || frames >= READY_FRAMES || refining || now - beganAt > 1) fade = Math.min(1, Math.max(0, fade + fadeDir * dt / FADE));
     if (leaving && fade <= 0) { begin(at + 1); return; }
     const pv = prevView;
-    still = pv && pv.x === view.x && pv.y === view.y && pv.h === view.h && pv.a === view.a ? still + 1 : 0;
+    still = pv && pv.x === view.x && pv.y === view.y && pv.h === view.h ? still + 1 : 0;   // (the turn aside: a rest turns on)
     const wantRefine = canRefine && TAA && still > STILL_REFINE && fade >= 1;
     if (wantRefine && !refining) startRefine();
-    if (!wantRefine && refining) stopRefine();
+    if (!wantRefine && refining) { if (refTurns && refN >= REF_SEED) bakeRefined(); stopRefine(); }
     if (refining) {
-      if (!refineTick(now, raw)) return;   // nothing new: the canvas keeps its picture
+      if (!refineTick(now, raw) && !refTurns) return;   // nothing new: the canvas keeps its picture (unless it turns)
       // Faded in over REF_IN s: switched on in one frame, its sharper picture popped (measured: a
       // frame-to-frame change 4x the settling motion's).
       refMix = Math.min(1, (now - refStartT) / REF_IN);
@@ -777,7 +821,7 @@ void main() {
   // After the hand: carry on from here, still.
   function touched() {
     holdUntil = performance.now() / 1000 + IDLE_RESUME; holdLen = IDLE_RESUME; settleAt = null; restHolding = false;
-    target = { x: view.x, y: view.y }; aim = { ...target }; vel = { x: 0, y: 0 }; steerT = 0; easeFor = 4;
+    target = { x: view.x, y: view.y }; aim = { ...target }; vel = { x: 0, y: 0 }; steerT = 0; easeFor = 4; turnSteer = 0;
   }
   // The plane under a point on the canvas (client px).
   function planeAt(cx, cy) {
