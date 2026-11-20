@@ -1,0 +1,33 @@
+const vec2 C0 = vec2(-0.04626509905075, -0.6800557930495), R0 = vec2(3.2124097607235804e-18, -0.05246263270291786);
+#define MAXITER 4951
+#define FORCEOUT false
+#define GRADV 0.5
+vec3 colourAt0(vec2 pixel) {
+    gAlpha = 1.0;
+    vec2 z;
+    vec2 f_zold = vec2(0.0);
+    z = vec2(1.0, 0.0);
+    float i_sum = 0.0, i_sum2 = 0.0; vec2 i_zold = vec2(0.0); float o_sum = 0.0, o_sum2 = 0.0; vec2 o_zold = vec2(0.0);
+    bool inside = true;
+    int numiter = 4951;   // UF's #numiter: the iterations done, not counting the one that bailed out (cl_sck_*)
+    for (int it = 0; it < 4951; it++) {
+        f_zold = z; z = z - cmul(vec2(3.50369, 2.31685), cdiv(z - cpowcap(z, vec2(-2.0, -0.0)), vec2(3.0, 0.0))) + pixel;
+        if (!(convgoing(z, f_zold, 1e-34))) { inside = false; numiter = it; break; }
+        // UF runs the colouring's loop only while still inside the bailout, so on the last
+        // iteration zold stays the z before (ExponentialSmoothing's convergence test needs it).
+        i_sum += (4951.0 / float(MAXITER)) * exp(-cabs(z));i_sum2 += (4951.0 / float(MAXITER)) * exp(-1.0 / cabs(i_zold - z));i_zold = z; o_sum += (4951.0 / float(MAXITER)) * exp(-cabs(z));o_sum2 += (4951.0 / float(MAXITER)) * exp(-1.0 / cabs(o_zold - z));o_zold = z;
+    }
+    float idx;
+    if (inside && !FORCEOUT) { if (mag2(z - i_zold) < 0.5) idx = i_sum2; else idx = i_sum; float x = idx * 55.0; x = pow(max(x, 0.0), 1.0 / 3.0) * 0.3303; if (isinf(x) || isnan(x)) x = 0.0; return texture(uGrad, vec2(fract(x) + 0.5 / 400.0, GRADV)).rgb; }
+    if (mag2(z - o_zold) < 0.5) idx = o_sum2; else idx = o_sum; float x = idx * 55.0; x = pow(max(x, 0.0), 1.0 / 3.0) * 0.3303; if (isinf(x) || isnan(x)) x = 0.0; return texture(uGrad, vec2(fract(x) + 0.5 / 400.0, GRADV)).rgb;
+}
+#undef MAXITER
+#undef FORCEOUT
+#undef GRADV
+
+vec3 liveColour(vec2 o) {
+    vec3 t1 = colourAt0(C0 + cmul(o, R0)); float at1 = gAlpha;
+    vec3 b2;
+    { vec3 t = clamp(t1, 0.0, 1.0), b = clamp(vec3(0.0), 0.0, 1.0); vec3 m = t; b2 = vec3(0.0) + (m - vec3(0.0)) * (1.0 * clamp(at1, 0.0, 1.0)); }
+    return clamp(b2, 0.0, 1.0);
+}
