@@ -50,6 +50,7 @@ body.no-live .hero-controls { display: none; }
 .hero-text .stage-row { margin: .8rem 0 .1rem; }
 .hero-text .stage { font-size: .85rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #142029; margin: 0; }
 body:not(.gems) .hero-text .stage { background: #93b4c9; }
+.hero-text .soon { margin-left: .6rem; font-size: .85rem; letter-spacing: .02em; color: #e6dccb; text-shadow: 0 1px 8px rgba(0,0,0,.9); white-space: nowrap; }
 .hero-text .tagline { margin: .7rem 0 0; font-size: clamp(1.05rem, 3vw, 1.35rem); color: #f4ead9; text-shadow: 0 1px 10px rgba(0,0,0,.9); max-width: 34rem; }
 .hero-controls { position: absolute; right: 1rem; top: 1rem; display: flex; gap: .7rem; z-index: 6; }
 .hero-controls button { width: 52px; height: 52px; border: 0; background: transparent; color: #fff; font-size: 20px; font-family: inherit; cursor: pointer; padding: 0; border-radius: 50%; }
