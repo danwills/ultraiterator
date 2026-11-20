@@ -215,7 +215,7 @@ void main() {
   let turnT = 0, turnPh = 0, turnSteer = 0;   // (turnSteer: s since a start or a touch)
   // Its rate, radians a second, at turn time t: a low, signed noise (two slow sines).
   const turnRate = (t, ease) => TURN_MAX * ease * (0.6 * Math.sin(0.043 * t + turnPh) + 0.4 * Math.sin(0.0187 * t + 2.1 * turnPh));
-  const DRIFT_MAX = 0.07;      // the most it drifts sideways, in screen heights a second (was 0.045)
+  const DRIFT_MAX = 0.09;      // the most it drifts sideways, in screen heights a second (was 0.045, 0.07)
   const RETARGET = 3;          // seconds between looks for detail (was 4.5)
   const PROBE = 40;            // the look's size, px square
   // Looking ahead: the best LOOK_K spots in the look (and straight on) are each drawn small,
@@ -523,11 +523,11 @@ void main() {
       const sd = Math.sqrt(Math.max(s2 / 25 - (s / 25) * (s / 25), 0));
       const dx = x / PROBE - 0.5, dy = y / PROBE - 0.5, r = Math.hypot(dx, dy);
       const along = sp > 1e-4 && r > 1e-3 ? (dx * sv.x + dy * sv.y) / (r * sp) : 0;
-      cells.push({ x, y, r, along, score: sd * (1 - 1.8 * r * r) * (1 + 0.5 * along) + rand() * 2 });
+      cells.push({ x, y, r, along, score: sd * (1 - 1.2 * r * r) * (1 + 0.5 * along) + rand() * 4 });
     }
     cells.sort((p, q) => q.score - p.score);
     // (The probe's square, view.h each way, so only the middle of a wide screen is looked at.)
-    const reach = STEER_OLD ? 0.7 : 0.55;
+    const reach = STEER_OLD ? 0.7 : 0.7;   // (0.55 till Dan wanted where it zooms to vary more)
     const at = c => {
       const ox = (c.x / PROBE - 0.5) * view.h * reach, oy = (c.y / PROBE - 0.5) * view.h * reach;
       return { x: view.x + ca * ox - sa * oy, y: view.y + sa * ox + ca * oy };
@@ -542,7 +542,9 @@ void main() {
     const deep = lookAhead(picks.map(at));
     let best = -1, pick = picks[0];
     picks.forEach((c, i) => {
-      const score = deep[i] * (1 - 1.2 * c.r * c.r) * (1 + 0.3 * c.along) * (c.straight ? 1.15 : 1) * (0.85 + 0.3 * rand());
+      // (Wider since Dan: "if the zoom-in location could vary a bit more": the middle and straight
+      // on were favoured more, 1.2 r² and 1.15, with 0.85-1.15 at random.)
+      const score = deep[i] * (1 - 0.6 * c.r * c.r) * (1 + 0.3 * c.along) * (0.7 + 0.6 * rand());
       if (score > best) { best = score; pick = c; }
     });
     target = at(pick);
