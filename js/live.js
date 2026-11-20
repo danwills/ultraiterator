@@ -95,7 +95,10 @@ uniform vec2 uRes, uAccRes;
 uniform vec3 uView, uRefView;
 out vec4 frag;
 void main() {
-    vec2 f = gl_FragCoord.xy;
+    // The outermost EDGE px all round are left off (stretching the rest over them): the blend's
+    // edge pixels have the least history and sparkled.
+    const float EDGE = 3.0;
+    vec2 f = mix(vec2(EDGE), uRes - EDGE, gl_FragCoord.xy / uRes);
     vec3 c = texture(uTex, f / uRes).rgb;
     if (uRefMix > 0.0) {
         vec2 o = uView.xy + (f - 0.5 * uRes) * (uView.z / uRes.y);
@@ -108,7 +111,7 @@ void main() {
         }
     }
     // A slight vignette: corners down to ~70%, the middle untouched.
-    vec2 q = (f / uRes - 0.5) * 2.0;
+    vec2 q = (gl_FragCoord.xy / uRes - 0.5) * 2.0;
     float r = length(q * vec2(uRes.x / length(uRes), uRes.y / length(uRes))) * 1.4142;
     float v = mix(1.0, 0.7, smoothstep(0.45, 1.0, r));
     frag = vec4(c * uFade * v, 1.0);
@@ -339,7 +342,8 @@ void main() {
     view = { x: 0, y: 0, h: startH };
     target = { x: 0, y: 0 }; aim = { x: 0, y: 0 }; vel = { x: 0, y: 0 };
     lastLook = performance.now() / 1000 - RETARGET + 1.0; steerT = 0; easeFor = 4;
-    holdUntil = -1e9; movedT = 0; nextRest = restIn(); settleAt = null; restHolding = false;
+    // (the first rest a quarter of the usual way in, as if it had joined a cycle partway through)
+    holdUntil = -1e9; movedT = 0; nextRest = restIn() / 4; settleAt = null; restHolding = false;
     fade = 0; fadeDir = 1; leaving = false; frames = 0; still = 0; prevView = null; stopRefine(); refMix = 0;
     load(order[(at + 1) % order.length]).catch(() => {});   // the next one compiles meanwhile
   }
