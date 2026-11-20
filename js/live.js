@@ -46,15 +46,18 @@ uniform float uKeep;       // the history's weight (0: start afresh)
 uniform float uClip;       // how far (in the neighbourhood's spreads) history may stray from this frame
 out vec4 frag;
 vec2 uiTurn(vec2 r, vec2 p) { return vec2(r.x * p.x - r.y * p.y, r.y * p.x + r.x * p.y); }   // p turned by r = (cos, sin)
+// (All nine taps: the usual five-tap shortcut, corners dropped, left an axis-aligned grid that
+// built up where the history's kept longest, round the zoom's centre; measured ~2x the 9-tap's.)
 vec3 catmullRom(vec2 p) {
     vec2 tc = floor(p - 0.5) + 0.5, f = p - tc;
     vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f)), w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
     vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f)), w3 = f * f * (-0.5 + 0.5 * f);
     vec2 w12 = w1 + w2, t12 = (tc + w2 / w12) / uRes, t0 = (tc - 1.0) / uRes, t3 = (tc + 2.0) / uRes;
-    vec3 c = texture(uHist, vec2(t12.x, t0.y)).rgb * w12.x * w0.y
-           + texture(uHist, vec2(t0.x, t12.y)).rgb * w0.x * w12.y + texture(uHist, t12).rgb * w12.x * w12.y + texture(uHist, vec2(t3.x, t12.y)).rgb * w3.x * w12.y
-           + texture(uHist, vec2(t12.x, t3.y)).rgb * w12.x * w3.y;
-    return c / (w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y);
+    vec3 c = vec3(0.0);
+    vec2 tx[3] = vec2[3](vec2(t0.x, w0.x), vec2(t12.x, w12.x), vec2(t3.x, w3.x));
+    vec2 ty[3] = vec2[3](vec2(t0.y, w0.y), vec2(t12.y, w12.y), vec2(t3.y, w3.y));
+    for (int j = 0; j < 3; j++) for (int i = 0; i < 3; i++) c += texture(uHist, vec2(tx[i].x, ty[j].x)).rgb * tx[i].y * ty[j].y;
+    return c;
 }
 void main() {
     vec2 f = gl_FragCoord.xy;
@@ -102,6 +105,20 @@ uniform vec2 uRot, uRefRot, uHistRot;
 uniform bool uSmooth;      // the refinement's turned under the view (a rest): read it bilinearly
 out vec4 frag;
 vec2 uiTurn(vec2 r, vec2 p) { return vec2(r.x * p.x - r.y * p.y, r.y * p.x + r.x * p.y); }   // p turned by r = (cos, sin)
+// The blend, enlarged to the screen by Catmull-Rom (9 bilinear taps) rather than bilinear, which
+// showed its pixel grid at the lower render scales.
+vec3 blendAt(vec2 uv) {
+    if (uHistRes.y >= uRes.y) return texture(uTex, uv).rgb;
+    vec2 p = uv * uHistRes, tc = floor(p - 0.5) + 0.5, f = p - tc;
+    vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f)), w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+    vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f)), w3 = f * f * (-0.5 + 0.5 * f);
+    vec2 w12 = w1 + w2, t12 = (tc + w2 / w12) / uHistRes, t0 = (tc - 1.0) / uHistRes, t3 = (tc + 2.0) / uHistRes;
+    vec2 tx[3] = vec2[3](vec2(t0.x, w0.x), vec2(t12.x, w12.x), vec2(t3.x, w3.x));
+    vec2 ty[3] = vec2[3](vec2(t0.y, w0.y), vec2(t12.y, w12.y), vec2(t3.y, w3.y));
+    vec3 c = vec3(0.0);
+    for (int j = 0; j < 3; j++) for (int i = 0; i < 3; i++) c += texture(uTex, vec2(tx[i].x, ty[j].x)).rgb * tx[i].y * ty[j].y;
+    return max(c, 0.0);
+}
 // The sums and counts both blend linearly, so a bilinear read of each (by hand: float textures
 // needn't filter) still divides out to a proper average.
 vec4 accAt(vec2 pf) {
@@ -117,7 +134,7 @@ void main() {
     vec2 o = uView.xy + uiTurn(uRot, (f - 0.5 * uRes) * (uView.z / uRes.y));
     // The blend, where its view was (it waits while refining, as the view turns on in a rest).
     vec2 hq = uiTurn(uHistRot * vec2(1.0, -1.0), o - uHistView.xy) / uHistView.z;
-    vec3 c = texture(uTex, vec2(hq.x * uHistRes.y / uHistRes.x, hq.y) + 0.5).rgb;
+    vec3 c = blendAt(vec2(hq.x * uHistRes.y / uHistRes.x, hq.y) + 0.5);
     if (uRefMix > 0.0) {
         vec2 pf = uiTurn(uRefRot * vec2(1.0, -1.0), o - uRefView.xy) * (uAccRes.y / uRefView.z) + 0.5 * uAccRes;
         if (all(greaterThanEqual(pf, vec2(0.0))) && all(lessThan(pf, uAccRes))) {
@@ -227,6 +244,7 @@ void main() {
   const STILL_FRAMES = 128;
   const PRECISION_MARGIN = 2;  // stop this many times short of where fp32 runs out
   const TAA = new URLSearchParams(location.search).get('taa') !== '0';   // ?taa=0: no blending, to compare
+  const PIN_STEP = new URLSearchParams(location.search).has('step') ? +new URLSearchParams(location.search).get('step') : null;   // ?step=n: hold the ladder there, to compare
   // Render scale (CSS px a pixel, up to the screen's own) and samples a side, cheapest first.
   // Slower hardware goes down to a quarter: softer, but its blend (LOW_*) keeps it steady and
   // smooth, which looks better than a sharper picture that sizzles (Dan, 2026-11-19).
@@ -450,7 +468,7 @@ void main() {
   const MOVE_SLOW = 1 / 12, MOVE_UP = 1 / 20;
   const maxScale = () => Math.min(window.devicePixelRatio || 1, 1.5);
   const steps = () => LADDER.filter(s => s[0] <= maxScale() + 1e-6);
-  let step = 4, ceiling = 99, ceilingUntil = 0, ceilingFor = 15, frameTimes = [];
+  let step = PIN_STEP ?? 4, ceiling = 99, ceilingUntil = 0, ceilingFor = 15, frameTimes = [];
   function adapt(dt, now) {
     if (refining) { frameTimes = []; return; }   // (slow frames are fine while still)
     frameTimes.push(dt);
@@ -469,6 +487,7 @@ void main() {
     if (med > MOVE_SLOW && step > 0) { ceiling = step - 1; ceilingUntil = now + ceilingFor; ceilingFor = Math.min(ceilingFor * 2, 240); step--; }
     else if (med < MOVE_UP && step < Math.min(top, ceiling)) step++;
     step = Math.min(step, top);
+    if (PIN_STEP !== null) step = Math.min(PIN_STEP, top);
   }
 
   // The moving view's buffers, at the ladder's scale, and HIST_MARGIN of the height more all round:
