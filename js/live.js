@@ -16,7 +16,9 @@ uniform int uAA;           // samples a side
 uniform vec3 uView;        // the view's middle (x, y) and height (z), in the picture's units (its 2k's height = 1)
 uniform vec2 uRes;
 uniform vec2 uJitter;      // this frame's sub-pixel offset
+uniform vec2 uRot;         // the view's turn, (cos, sin)
 out vec4 frag;
+vec2 uiTurn(vec2 r, vec2 p) { return vec2(r.x * p.x - r.y * p.y, r.y * p.x + r.x * p.y); }   // p turned by r = (cos, sin)
 `;
   // As the app's LIVE_GEN_MAIN, but `o` from the view rather than a tile.
   const MAIN = `
@@ -25,7 +27,7 @@ void main() {
     float px = uView.z / uRes.y;
     for (int j = 0; j < uAA; j++) for (int i = 0; i < uAA; i++) {
         vec2 f = gl_FragCoord.xy + uJitter + (vec2(i, j) + 0.5) / float(uAA) - 0.5;
-        sum += liveColour(uView.xy + (f - 0.5 * uRes) * px);
+        sum += liveColour(uView.xy + uiTurn(uRot, (f - 0.5 * uRes) * px));
     }
     frag = vec4(clamp(sum / float(uAA * uAA), 0.0, 1.0), 1.0);
 }`;
@@ -39,9 +41,11 @@ precision highp float;
 uniform sampler2D uCur, uHist;
 uniform vec2 uRes;
 uniform vec3 uView, uPrev;
+uniform vec2 uRot, uPrevRot;   // their turns, (cos, sin)
 uniform float uKeep;       // the history's weight (0: start afresh)
 uniform float uClip;       // how far (in the neighbourhood's spreads) history may stray from this frame
 out vec4 frag;
+vec2 uiTurn(vec2 r, vec2 p) { return vec2(r.x * p.x - r.y * p.y, r.y * p.x + r.x * p.y); }   // p turned by r = (cos, sin)
 vec3 catmullRom(vec2 p) {
     vec2 tc = floor(p - 0.5) + 0.5, f = p - tc;
     vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f)), w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
@@ -55,8 +59,8 @@ vec3 catmullRom(vec2 p) {
 void main() {
     vec2 f = gl_FragCoord.xy;
     vec3 c = texelFetch(uCur, ivec2(f), 0).rgb;
-    vec2 o = uView.xy + (f - 0.5 * uRes) * (uView.z / uRes.y);
-    vec2 pf = (o - uPrev.xy) * (uRes.y / uPrev.z) + 0.5 * uRes;
+    vec2 o = uView.xy + uiTurn(uRot, (f - 0.5 * uRes) * (uView.z / uRes.y));
+    vec2 pf = uiTurn(uPrevRot * vec2(1.0, -1.0), o - uPrev.xy) * (uRes.y / uPrev.z) + 0.5 * uRes;
     // Pixels drifting in at an edge have no history of their own: they take the nearest edge's,
     // at most a pixel or so away, rather than showing one noisy sample (sparkles round the frame).
     if (uKeep > 0.0) {
@@ -93,7 +97,9 @@ uniform float uFade, uRefMix;
 uniform float uSeed;       // the moving view's picture counts as this many samples in the refinement
 uniform vec2 uRes, uAccRes;
 uniform vec3 uView, uRefView;
+uniform vec2 uRot, uRefRot;
 out vec4 frag;
+vec2 uiTurn(vec2 r, vec2 p) { return vec2(r.x * p.x - r.y * p.y, r.y * p.x + r.x * p.y); }   // p turned by r = (cos, sin)
 void main() {
     // The outermost EDGE px all round are left off (stretching the rest over them): the blend's
     // edge pixels have the least history and sparkled.
@@ -101,8 +107,8 @@ void main() {
     vec2 f = mix(vec2(EDGE), uRes - EDGE, gl_FragCoord.xy / uRes);
     vec3 c = texture(uTex, f / uRes).rgb;
     if (uRefMix > 0.0) {
-        vec2 o = uView.xy + (f - 0.5 * uRes) * (uView.z / uRes.y);
-        vec2 pf = (o - uRefView.xy) * (uAccRes.y / uRefView.z) + 0.5 * uAccRes;
+        vec2 o = uView.xy + uiTurn(uRot, (f - 0.5 * uRes) * (uView.z / uRes.y));
+        vec2 pf = uiTurn(uRefRot * vec2(1.0, -1.0), o - uRefView.xy) * (uAccRes.y / uRefView.z) + 0.5 * uAccRes;
         if (all(greaterThanEqual(pf, vec2(0.0))) && all(lessThan(pf, uAccRes))) {
             vec4 a = texelFetch(uAcc, ivec2(pf), 0);
             // From the first sample on: the moving view's picture, worth uSeed samples, and the
@@ -130,6 +136,8 @@ void main() {
 }`;
 
   const ZOOM_RATE = 0.13;      // octaves a second (quicker since the rests show it sharp; was 0.085)
+  const TURN_MAX = 0.015;      // the most it turns, radians a second (~0.9°; ~0.6° a second on average)
+  let turnT = 0, turnPh = Math.random() * 6.283;
   const DRIFT_MAX = 0.045;     // the most it drifts sideways, in screen heights a second
   const RETARGET = 4.5;        // seconds between looks for detail
   const PROBE = 40;            // the look's size, px square
@@ -221,7 +229,7 @@ void main() {
   let order = [];
   let cur = null;          // { pick, prog, tex, uni }
   let at = 0;              // place in `order`
-  let view = { x: 0, y: 0, h: 1 }, prevView = null;
+  let view = { x: 0, y: 0, h: 1, a: 0 }, prevView = null;   // (a: its turn, radians anticlockwise)
   let target = { x: 0, y: 0 }, aim = { x: 0, y: 0 }, vel = { x: 0, y: 0 };
   let startH = 1, minH = 1e-3, lastLook = 0, steerT = 0, easeFor = 4;   // (easeFor: s to reach full speed)
   // Held still till holdUntil (a touch, or a rest), holdLen s in all; moving for movedT s since the
@@ -285,8 +293,8 @@ void main() {
   function uniforms(p, names) { const u = {}; for (const n of names) u[n] = gl.getUniformLocation(p, n); return u; }
   const resolve = link(RESOLVE_FS).p, show = link(SHOW_FS).p, bake = link(BAKE_FS).p;
   const BU = uniforms(bake, ['uAcc', 'uRes', 'uAccRes']);
-  const RU = uniforms(resolve, ['uCur', 'uHist', 'uRes', 'uView', 'uPrev', 'uKeep', 'uClip']);
-  const SU = uniforms(show, ['uTex', 'uAcc', 'uFade', 'uRefMix', 'uSeed', 'uRes', 'uAccRes', 'uView', 'uRefView']);
+  const RU = uniforms(resolve, ['uCur', 'uHist', 'uRes', 'uView', 'uPrev', 'uKeep', 'uClip', 'uRot', 'uPrevRot']);
+  const SU = uniforms(show, ['uTex', 'uAcc', 'uFade', 'uRefMix', 'uSeed', 'uRes', 'uAccRes', 'uView', 'uRefView', 'uRot', 'uRefRot']);
 
   // Its gradients: the PNG's top half, UF's rows (the bottom half is the same in linear light).
   async function gradient(id) {
@@ -313,7 +321,7 @@ void main() {
       loaded.set(pick.id, (async () => {
         const src = await (await fetch('live/' + pick.id + '.glsl')).text();
         const [prog, tex] = await Promise.all([program(HEAD + common + src + MAIN), gradient(pick.id)]);
-        return { pick, prog, tex, uni: uniforms(prog, ['uGrad', 'uAA', 'uView', 'uRes', 'uJitter']) };
+        return { pick, prog, tex, uni: uniforms(prog, ['uGrad', 'uAA', 'uView', 'uRes', 'uJitter', 'uRot']) };
       })());
     }
     return loaded.get(pick.id);
@@ -339,7 +347,7 @@ void main() {
     // for a while), with a margin, since the sub-pixel samples go finer still.
     const screenPx = canvas.getBoundingClientRect().height * Math.min(window.devicePixelRatio || 1, 2);
     minH = Math.max(startH / 4096, screenPx * PRECISION_MARGIN / (2048 * pick.depth));
-    view = { x: 0, y: 0, h: startH };
+    view = { x: 0, y: 0, h: startH, a: 0 };
     target = { x: 0, y: 0 }; aim = { x: 0, y: 0 }; vel = { x: 0, y: 0 };
     lastLook = performance.now() / 1000 - RETARGET + 1.0; steerT = 0; easeFor = 4;
     // (the first rest a quarter of the usual way in, as if it had joined a cycle partway through)
@@ -365,6 +373,7 @@ void main() {
     gl.uniform3f(u.uView, v.x, v.y, v.h);
     gl.uniform2f(u.uRes, w, h);
     gl.uniform2f(u.uJitter, jx, jy);
+    gl.uniform2f(u.uRot, Math.cos(v.a), Math.sin(v.a));
     quadDraw(w, h);
   }
 
@@ -377,19 +386,21 @@ void main() {
     gl.readPixels(0, 0, PROBE, PROBE, gl.RGBA, gl.UNSIGNED_BYTE, probePx);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     const L = (x, y) => { const k = (y * PROBE + x) * 4; return 0.3 * probePx[k] + 0.59 * probePx[k + 1] + 0.11 * probePx[k + 2]; };
-    const sp = Math.hypot(vel.x, vel.y);
+    const sp = Math.hypot(vel.x, vel.y), ca = Math.cos(view.a), sa = Math.sin(view.a);
+    const sv = { x: ca * vel.x + sa * vel.y, y: -sa * vel.x + ca * vel.y };   // (its drift on screen)
     let best = -1, bx = PROBE / 2, by = PROBE / 2;
     for (let y = 4; y < PROBE - 4; y += 2) for (let x = 4; x < PROBE - 4; x += 2) {
       let s = 0, s2 = 0;
       for (let j = -2; j <= 2; j++) for (let i = -2; i <= 2; i++) { const l = L(x + i, y + j); s += l; s2 += l * l; }
       const sd = Math.sqrt(Math.max(s2 / 25 - (s / 25) * (s / 25), 0));
       const dx = x / PROBE - 0.5, dy = y / PROBE - 0.5, r = Math.hypot(dx, dy);
-      const along = sp > 1e-4 && r > 1e-3 ? (dx * vel.x + dy * vel.y) / (r * sp) : 0;
+      const along = sp > 1e-4 && r > 1e-3 ? (dx * sv.x + dy * sv.y) / (r * sp) : 0;
       const score = sd * (1 - 1.8 * r * r) * (1 + 0.5 * along) + Math.random() * 2;
       if (score > best) { best = score; bx = x; by = y; }
     }
     // (The probe's square, view.h each way, so only the middle of a wide screen is looked at.)
-    target = { x: view.x + (bx / PROBE - 0.5) * view.h * 0.7, y: view.y + (by / PROBE - 0.5) * view.h * 0.7 };
+    const ox = (bx / PROBE - 0.5) * view.h * 0.7, oy = (by / PROBE - 0.5) * view.h * 0.7;
+    target = { x: view.x + ca * ox - sa * oy, y: view.y + sa * ox + ca * oy };
   }
 
   // Quality: a step on LADDER, moved by how long frames take. A step that proved too slow is
@@ -459,6 +470,8 @@ void main() {
     gl.uniform3f(RU.uView, view.x, view.y, view.h);
     const pv = prevView || view;
     gl.uniform3f(RU.uPrev, pv.x, pv.y, pv.h);
+    gl.uniform2f(RU.uRot, Math.cos(view.a), Math.sin(view.a));
+    gl.uniform2f(RU.uPrevRot, Math.cos(pv.a), Math.sin(pv.a));
     // More careful the deeper it is (Dan: the blending fuzzed the detail zoomed in): less history,
     // clipped tighter, by how far through its depth it's got.
     const deep = Math.min(1, Math.max(0, Math.log(startH / view.h) / Math.log(startH / minH)));
@@ -626,6 +639,8 @@ void main() {
     gl.uniform3f(SU.uView, view.x, view.y, view.h);
     const rv = refView || view;
     gl.uniform3f(SU.uRefView, rv.x, rv.y, rv.h);
+    gl.uniform2f(SU.uRot, Math.cos(view.a), Math.sin(view.a));
+    gl.uniform2f(SU.uRefRot, Math.cos(rv.a), Math.sin(rv.a));
     quadDraw(w, h);
   }
 
@@ -707,6 +722,9 @@ void main() {
       const sp = Math.hypot(vel.x, vel.y), cap = DRIFT_MAX * ease + 1e-6;
       if (sp > cap) { vel.x *= cap / sp; vel.y *= cap / sp; }
       view.x += vel.x * view.h * dt; view.y += vel.y * view.h * dt;
+      // A very slow turn, its way and speed a low, signed noise (two slow sines), eased like the rest.
+      turnT += dt;
+      view.a += TURN_MAX * ease * (0.6 * Math.sin(0.043 * turnT + turnPh) + 0.4 * Math.sin(0.0187 * turnT + 2.1 * turnPh)) * dt;
       if (view.h <= minH * 1.2 && !leaving) { leaving = true; fadeDir = -1; }
     }
     // Fading in only once the blend has a few frames (or the refinement is under way): the very
@@ -714,7 +732,7 @@ void main() {
     if (fadeDir < 0 || frames >= READY_FRAMES || refining) fade = Math.min(1, Math.max(0, fade + fadeDir * dt / FADE));
     if (leaving && fade <= 0) { begin(at + 1); return; }
     const pv = prevView;
-    still = pv && pv.x === view.x && pv.y === view.y && pv.h === view.h ? still + 1 : 0;
+    still = pv && pv.x === view.x && pv.y === view.y && pv.h === view.h && pv.a === view.a ? still + 1 : 0;
     const wantRefine = canRefine && TAA && still > STILL_REFINE && fade >= 1;
     if (wantRefine && !refining) startRefine();
     if (!wantRefine && refining) stopRefine();
@@ -737,7 +755,9 @@ void main() {
   // The plane under a point on the canvas (client px).
   function planeAt(cx, cy) {
     const r = canvas.getBoundingClientRect();
-    return { x: view.x + (cx - r.left - r.width / 2) / r.height * view.h, y: view.y - (cy - r.top - r.height / 2) / r.height * view.h };
+    const ox = (cx - r.left - r.width / 2) / r.height * view.h, oy = -(cy - r.top - r.height / 2) / r.height * view.h;
+    const ca = Math.cos(view.a), sa = Math.sin(view.a);
+    return { x: view.x + ca * ox - sa * oy, y: view.y + sa * ox + ca * oy };
   }
   // Zoom by f about a client point, which stays put.
   function zoomAbout(f, cx, cy) {
@@ -749,7 +769,8 @@ void main() {
   }
   function panBy(dx, dy) {
     const r = canvas.getBoundingClientRect();
-    view.x -= dx / r.height * view.h; view.y += dy / r.height * view.h;
+    const ox = -dx / r.height * view.h, oy = dy / r.height * view.h, ca = Math.cos(view.a), sa = Math.sin(view.a);
+    view.x += ca * ox - sa * oy; view.y += sa * ox + ca * oy;
     touched();
   }
 
@@ -815,7 +836,7 @@ void main() {
     },
     // Play: off at once (no wait after a touch), up to speed in a second or so.
     togglePause() { paused = !paused; restHolding = false; if (!paused) { steerT = 0; easeFor = 1.2; holdUntil = -1e9; settleAt = null; movedT = 0; } return paused; },
-    state: () => ({ fade, leaving, step, scale: steps()[step][0], still, refining, refN, refMix, bands, bandMs, frameInt, refDuty, refScale: refScaleNow(), acc: acc && acc.w + 'x' + acc.h, frames, h: view.h, minH }),
+    state: () => ({ fade, leaving, step, scale: steps()[step][0], still, refining, refN, refMix, bands, bandMs, frameInt, refDuty, refScale: refScaleNow(), acc: acc && acc.w + 'x' + acc.h, frames, h: view.h, a: view.a, minH }),
   };
 
   canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); cur = null; });

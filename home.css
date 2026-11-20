@@ -41,7 +41,7 @@ body:not(.gems) .hero-text .stage { background: #93b4c9; }
 .hero-controls { position: absolute; right: 1rem; top: 1rem; display: flex; gap: .7rem; z-index: 6; }
 .hero-controls button { width: 52px; height: 52px; border: 0; background: transparent; color: #fff; font-size: 20px; font-family: inherit; cursor: pointer; padding: 0; border-radius: 50%; }
 .live-say { position: absolute; top: calc(100% + .4rem); right: 0; white-space: nowrap; font-size: .72rem; font-weight: 300; letter-spacing: .02em;
-  color: rgba(236,228,216,.6); text-shadow: 0 1px 8px rgba(0,0,0,.8); pointer-events: none; opacity: 0; transition: opacity .8s ease; }
+  color: rgba(240,233,222,.9); text-shadow: 0 1px 6px #000, 0 0 10px rgba(0,0,0,.8); pointer-events: none; opacity: 0; transition: opacity .8s ease; }
 .live-say.on { opacity: 1; }
 .hero-controls button .glyph { text-shadow: 0 1px 4px rgba(0,0,0,.8); }
 .hero-controls button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
