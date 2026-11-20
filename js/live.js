@@ -96,6 +96,7 @@ uniform sampler2D uAcc;    // the refinement: colour sums, and their count in al
 uniform float uFade, uRefMix;
 uniform float uSeed;       // the moving view's picture counts as this many samples in the refinement
 uniform vec2 uRes, uAccRes;
+uniform vec2 uHistRes;      // the blend's size (it reaches a little past the screen all round)
 uniform vec3 uView, uRefView, uHistView;
 uniform vec2 uRot, uRefRot, uHistRot;
 uniform bool uSmooth;      // the refinement's turned under the view (a rest): read it bilinearly
@@ -112,14 +113,11 @@ vec4 accAt(vec2 pf) {
                mix(texelFetch(uAcc, ivec2(i0.x, i1.y), 0), texelFetch(uAcc, i1, 0), t.x), t.y);
 }
 void main() {
-    // The outermost EDGE px all round are left off (stretching the rest over them): the blend's
-    // edge pixels have the least history and sparkled.
-    const float EDGE = 3.0;
-    vec2 f = mix(vec2(EDGE), uRes - EDGE, gl_FragCoord.xy / uRes);
+    vec2 f = gl_FragCoord.xy;
     vec2 o = uView.xy + uiTurn(uRot, (f - 0.5 * uRes) * (uView.z / uRes.y));
     // The blend, where its view was (it waits while refining, as the view turns on in a rest).
     vec2 hq = uiTurn(uHistRot * vec2(1.0, -1.0), o - uHistView.xy) / uHistView.z;
-    vec3 c = texture(uTex, vec2(hq.x * uRes.y / uRes.x, hq.y) + 0.5).rgb;
+    vec3 c = texture(uTex, vec2(hq.x * uHistRes.y / uHistRes.x, hq.y) + 0.5).rgb;
     if (uRefMix > 0.0) {
         vec2 pf = uiTurn(uRefRot * vec2(1.0, -1.0), o - uRefView.xy) * (uAccRes.y / uRefView.z) + 0.5 * uAccRes;
         if (all(greaterThanEqual(pf, vec2(0.0))) && all(lessThan(pf, uAccRes))) {
@@ -317,7 +315,7 @@ void main() {
   const resolve = link(RESOLVE_FS).p, show = link(SHOW_FS).p, bake = link(BAKE_FS).p;
   const BU = uniforms(bake, ['uAcc', 'uRes', 'uAccRes', 'uView', 'uRefView', 'uRot', 'uRefRot']);
   const RU = uniforms(resolve, ['uCur', 'uHist', 'uRes', 'uView', 'uPrev', 'uKeep', 'uClip', 'uRot', 'uPrevRot']);
-  const SU = uniforms(show, ['uTex', 'uAcc', 'uFade', 'uRefMix', 'uSeed', 'uRes', 'uAccRes', 'uView', 'uRefView', 'uRot', 'uRefRot', 'uHistView', 'uHistRot', 'uSmooth']);
+  const SU = uniforms(show, ['uTex', 'uAcc', 'uFade', 'uRefMix', 'uSeed', 'uRes', 'uAccRes', 'uView', 'uRefView', 'uRot', 'uRefRot', 'uHistView', 'uHistRot', 'uSmooth', 'uHistRes']);
 
   // Its gradients: the PNG's top half, UF's rows (the bottom half is the same in linear light).
   async function gradient(id) {
@@ -447,6 +445,9 @@ void main() {
 
   // Quality: a step on LADDER, moved by how long frames take. A step that proved too slow is
   // kept off for a while (longer each time), so it doesn't see-saw.
+  // Down a step under ~12 fps (Dan: a sharper moving view is worth a slower one, on a slow GPU),
+  // and up one only where the next (~1.5x the pixels) would still be over it.
+  const MOVE_SLOW = 1 / 12, MOVE_UP = 1 / 20;
   const maxScale = () => Math.min(window.devicePixelRatio || 1, 1.5);
   const steps = () => LADDER.filter(s => s[0] <= maxScale() + 1e-6);
   let step = 4, ceiling = 99, ceilingUntil = 0, ceilingFor = 15, frameTimes = [];
@@ -462,19 +463,26 @@ void main() {
     frameTimes = [];
     if (med > TOO_SLOW && step === 0) { giveUp(); return; }
     if (med > TOO_SLOW * 2) { step = 0; ceiling = 0; ceilingUntil = now + 600; return; }   // hopeless: straight to the bottom
-    if (med > 0.06 && step > 1) step--;   // very slow: a step more
+    if (med > 0.15 && step > 1) step--;   // very slow: a step more
     const top = steps().length - 1;
     if (now > ceilingUntil) ceiling = 99;
-    if (med > 0.03 && step > 0) { ceiling = step - 1; ceilingUntil = now + ceilingFor; ceilingFor = Math.min(ceilingFor * 2, 240); step--; }
-    else if (med < 0.019 && step < Math.min(top, ceiling)) step++;
+    if (med > MOVE_SLOW && step > 0) { ceiling = step - 1; ceilingUntil = now + ceilingFor; ceilingFor = Math.min(ceilingFor * 2, 240); step--; }
+    else if (med < MOVE_UP && step < Math.min(top, ceiling)) step++;
     step = Math.min(step, top);
   }
 
-  // The moving view's buffers, at the ladder's scale.
+  // The moving view's buffers, at the ladder's scale, and HIST_MARGIN of the height more all round:
+  // a blend's edge pixels have the least history (things come in there, reprojected from nowhere)
+  // and sparkled, so they're drawn but kept just off the screen. ov(v): v as the buffers see it.
+  const HIST_MARGIN = 0.03;
+  let histOver = 1;
+  const ov = v => ({ ...v, h: v.h * histOver });
   function resize() {
     const r = canvas.getBoundingClientRect();
     const s = steps()[step][0];
-    const w = Math.max(16, Math.round(r.width * s)), h = Math.max(16, Math.round(r.height * s));
+    const hi = Math.max(16, Math.round(r.height * s)), m = Math.ceil(hi * HIST_MARGIN) + 2;
+    const w = Math.max(16, Math.round(r.width * s)) + 2 * m, h = hi + 2 * m;
+    histOver = h / hi;
     if (sampled && sampled.w === w && sampled.h === h) return;
     const old = hist[histAt] || null;
     if (sampled) sampled.free();
@@ -501,7 +509,7 @@ void main() {
     const w = sampled.w, h = sampled.h;
     jitterI = (jitterI % 64) + 1;
     gl.bindFramebuffer(gl.FRAMEBUFFER, sampled.fb);
-    drawFractal(w, h, view, steps()[step][1], halton(jitterI, 2) - 0.5, halton(jitterI, 3) - 0.5);
+    drawFractal(w, h, ov(view), steps()[step][1], halton(jitterI, 2) - 0.5, halton(jitterI, 3) - 0.5);
     const src = hist[histAt], dst = hist[1 - histAt];
     gl.bindFramebuffer(gl.FRAMEBUFFER, dst.fb);
     gl.useProgram(resolve);
@@ -509,9 +517,9 @@ void main() {
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, src.tex);
     gl.uniform1i(RU.uCur, 0); gl.uniform1i(RU.uHist, 1);
     gl.uniform2f(RU.uRes, w, h);
-    gl.uniform3f(RU.uView, view.x, view.y, view.h);
+    gl.uniform3f(RU.uView, view.x, view.y, view.h * histOver);
     const pv = prevView || view;
-    gl.uniform3f(RU.uPrev, pv.x, pv.y, pv.h);
+    gl.uniform3f(RU.uPrev, pv.x, pv.y, pv.h * histOver);
     gl.uniform2f(RU.uRot, Math.cos(view.a), Math.sin(view.a));
     gl.uniform2f(RU.uPrevRot, Math.cos(pv.a), Math.sin(pv.a));
     // More careful the deeper it is (Dan: the blending fuzzed the detail zoomed in): less history,
@@ -579,7 +587,7 @@ void main() {
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, acc.tex);
     gl.uniform1i(BU.uAcc, 0);
     gl.uniform2f(BU.uRes, t.w, t.h); gl.uniform2f(BU.uAccRes, acc.w, acc.h);
-    gl.uniform3f(BU.uView, view.x, view.y, view.h); gl.uniform3f(BU.uRefView, refView.x, refView.y, refView.h);
+    gl.uniform3f(BU.uView, view.x, view.y, view.h * histOver); gl.uniform3f(BU.uRefView, refView.x, refView.y, refView.h);
     gl.uniform2f(BU.uRot, Math.cos(view.a), Math.sin(view.a)); gl.uniform2f(BU.uRefRot, Math.cos(refView.a), Math.sin(refView.a));
     quadDraw(t.w, t.h);
     prevView = { ...view };   // (the buffer's view now)
@@ -704,7 +712,8 @@ void main() {
     gl.uniform2f(SU.uRot, Math.cos(view.a), Math.sin(view.a));
     gl.uniform2f(SU.uRefRot, Math.cos(rv.a), Math.sin(rv.a));
     const hv = prevView || view;   // (the blend's view: renderTaa's last)
-    gl.uniform3f(SU.uHistView, hv.x, hv.y, hv.h);
+    gl.uniform3f(SU.uHistView, hv.x, hv.y, hv.h * histOver);
+    gl.uniform2f(SU.uHistRes, hist[histAt].w, hist[histAt].h);
     gl.uniform2f(SU.uHistRot, Math.cos(hv.a), Math.sin(hv.a));
     gl.uniform1i(SU.uSmooth, refTurns ? 1 : 0);
     quadDraw(w, h);
