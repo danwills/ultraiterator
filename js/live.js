@@ -224,6 +224,11 @@ void main() {
   // fractal instead of rendering a nice deep-zoom"): it settles there, at END_REST_AT x its least
   // height, refines as any rest does, then fades to the next fractal still holding the refined view.
   const END_REST_AT = 1.5;
+  // ...and that last rest is meant to end sharp (Dan: "zooms in for ages and doesn't reward with
+  // a high-res"): it refines at the screen's full resolution whatever the refinement had stepped
+  // down to (watchFps), doesn't turn (so needs no margin and never runs out of it), and holds till
+  // END_MIN_N samples a pixel and settled, or END_MAX s.
+  const END_MIN_N = 64, END_MAX = 60;
   const REST_LEAD = 5;         // seconds of moving the pause pearl shows a rest coming (and then its settling)
   // A word under the pause pearl as a rest begins and ends.
   const sayEl = document.getElementById('live-say'), SAY_FOR = 3.5;
@@ -678,7 +683,8 @@ void main() {
   // (A phone's at a CSS pixel at most, not its screen's own: its samples' grid, enlarged by the
   // browser, showed as much as a desktop's did.)
   const refScaleMax = () => HI_OK ? Math.min(window.devicePixelRatio || 1, 2) : Math.max(steps()[step][0], Math.min(window.devicePixelRatio || 1, 1));
-  const refScaleNow = () => Math.max(steps()[step][0], Math.min(refScaleMax(), refScale || 1e9));
+  const endHeld = () => endRest && (restHolding || ended);
+  const refScaleNow = () => endHeld() ? refScaleMax() : Math.max(steps()[step][0], Math.min(refScaleMax(), refScale || 1e9));
   let baseFrame = 1 / 60;   // the page's frame time while moving, refinement's yardstick
   let refComfort = 0, refUpAt = 0, refUpWait = REF_UP_WAIT, refWentUp = false;
   // The page's frame rate while refining, each second: too slow, less of the GPU, then a lower
@@ -694,7 +700,7 @@ void main() {
     if (med <= Math.max(1 / REF_MIN_FPS, baseFrame * 1.3)) {
       if (med < 1 / REF_UP_FPS) refDuty = Math.min(REF_DUTY, refDuty * 1.15);
       refComfort = med < 1 / REF_UP_FPS && refDuty >= REF_DUTY - 1e-6 ? refComfort + span : 0;
-      if (refComfort > REF_UP_AFTER && now > refUpAt && s < refScaleMax() - 1e-6) {
+      if (refComfort > REF_UP_AFTER && now > refUpAt && s < refScaleMax() - 1e-6 && !endHeld()) {
         refWentUp = true;
         return rescale(Math.min(refScaleMax(), s / REF_SCALE_STEP));
       }
@@ -702,7 +708,7 @@ void main() {
     }
     refComfort = 0;
     if (refDuty > REF_DUTY_MIN + 1e-6) { refDuty = Math.max(REF_DUTY_MIN, refDuty * 0.7); return false; }
-    if (s <= steps()[step][0] + 1e-6) return false;   // as low as the moving view's already
+    if (s <= steps()[step][0] + 1e-6 || endHeld()) return false;   // as low as the moving view's already (or the end's rest, kept sharp)
     // A step up that didn't hold: don't try again for a while (longer each time).
     if (refWentUp) { refUpAt = now + refUpWait; refUpWait *= 2; }
     refWentUp = false;
@@ -739,7 +745,7 @@ void main() {
     // the rest of the hold will make (worked out ahead, the noise being known), and the screen just
     // reads it turned. ~14° at the most, about half as many pixels again for a wide screen.
     let ang = 0;
-    if (restHolding && !paused) {
+    if (restHolding && !paused && !endRest) {
       const now = performance.now() / 1000, ease = turnEase();
       const T = (restWaiting ? Math.max(0, restAt + REST_TURN_FOR - now) : Math.max(0, holdUntil - now)) + 0.5;
       for (let t = 0; t < T; t += 0.1) ang += turnRate(turnT + t, ease) * 0.1;
@@ -943,7 +949,7 @@ void main() {
         restEase = smooth(REST_SETTLE, 0, now - settleAt);
         if (now - settleAt >= REST_SETTLE) {
           restWaiting = canRefine && TAA; restAt = now; settleRead = null; settleReads = 0;
-          settleAt = null; holdUntil = now + (restWaiting ? REST_MAX : REST_HOLD); holdLen = restWaiting ? REST_MAX : REST_HOLD; movedT = 0; nextRest = restIn();
+          settleAt = null; holdUntil = now + (restWaiting ? (endRest ? END_MAX : REST_MAX) : REST_HOLD); holdLen = restWaiting ? (endRest ? END_MAX : REST_MAX) : REST_HOLD; movedT = 0; nextRest = restIn();
           steerT = 0; easeFor = REST_RESUME; vel = { x: 0, y: 0 }; target = { x: view.x, y: view.y }; aim = { ...target };
           restEase = 0; restHolding = true; say('resting and refining');
         }
@@ -965,7 +971,7 @@ void main() {
       view.x += vel.x * view.h * dt; view.y += vel.y * view.h * dt;
       turn(dt);
       if (view.h <= minH * 1.2 && !leaving && !endRest) { leaving = true; fadeDir = -1; }
-    } else if (restHolding && !paused) turn(dt);   // (a rest only stops the dive: the refinement's read turned)
+    } else if (restHolding && !paused && !endRest) turn(dt);   // (a rest only stops the dive: the refinement's read turned)
     // Fading in only once the blend has a few frames (or the refinement is under way): the very
     // first frames are single noisy samples.
     if (fadeDir < 0 || frames >= READY_FRAMES || refining || now - beganAt > 1) fade = Math.min(1, Math.max(0, fade + fadeDir * dt / FADE));
@@ -993,7 +999,7 @@ void main() {
   // A rest's refinement settling (REST_STILL): when it has, or has turned as far as it refined, the
   // rest's end is set, and the pause pearl's ring (full till then) runs down to it.
   function watchSettle(now) {
-    let done = refN >= REF_MAX || Math.abs(view.a - refView.a) > refAng - 0.01;
+    let done = refN >= REF_MAX || refTurns && Math.abs(view.a - refView.a) > refAng - 0.01;
     if (done) restWhy = refN >= REF_MAX ? 'max samples' : 'turned ' + Math.abs(view.a - refView.a).toFixed(3) + ' of ' + refAng.toFixed(3);
     if (!done && now - settleReadAt >= 1 && refN > 0) {
       const x = Math.max(0, (acc.w - SETTLE_PX) >> 1), y = Math.max(0, (acc.h - SETTLE_PX) >> 1);
@@ -1009,12 +1015,12 @@ void main() {
         const rate = d / (n * 3) * 255 / (now - settleReadAt);   // (of 255, a second)
         settleReads = rate < REST_STILL ? settleReads + 1 : 0;
         restRate = rate;
-        if (settleReads >= 2) { done = true; restWhy = 'settled ' + rate.toFixed(2); }
+        if (settleReads >= 2 && (!endRest || refN >= END_MIN_N)) { done = true; restWhy = 'settled ' + rate.toFixed(2); }
       }
       if (!settleRead || refN < settleReadN) settleReads = 0;   // (begun again, smaller: watchFps)
       settleRead = mean; settleReadAt = now; settleReadN = refN;
     }
-    if (now - restAt > REST_MAX) { done = true; restWhy = 'max time'; }
+    if (now - restAt > (endRest ? END_MAX : REST_MAX)) { done = true; restWhy = 'max time'; }
     if (!done) return;
     restWaiting = false;
     holdUntil = Math.max(now + REST_AFTER, restAt + REST_MIN); holdLen = holdUntil - now;
