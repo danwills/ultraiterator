@@ -184,7 +184,7 @@ void main() {
   const IDLE_RESUME = 9;       // seconds after a touch before it steers itself again
   // Rests: the dive eases to a stop now and then (after REST_EVERY s of moving) and holds still for
   // REST_HOLD s, so the refinement gets to show; the pause pearl counts it down as after a touch.
-  const REST_EVERY = [15, 30], REST_HOLD = 15, REST_SETTLE = 3, REST_RESUME = 3;
+  const REST_EVERY = [15, 30], REST_HOLD = 22, REST_SETTLE = 3, REST_RESUME = 3;
   const REST_LEAD = 5;         // seconds of moving the pause pearl shows a rest coming (and then its settling)
   // A word under the pause pearl as a rest begins and ends.
   const sayEl = document.getElementById('live-say'), SAY_FOR = 3.5;
