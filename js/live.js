@@ -185,6 +185,14 @@ void main() {
   // Rests: the dive eases to a stop now and then (after REST_EVERY s of moving) and holds still for
   // REST_HOLD s, so the refinement gets to show; the pause pearl counts it down as after a touch.
   const REST_EVERY = [15, 30], REST_HOLD = 22, REST_SETTLE = 3, REST_RESUME = 3;
+  // ...or, where it refines, for as long as the picture's still settling (Dan): about once a second
+  // the middle of the refinement is read back, and once it changes by under REST_STILL (of 255)
+  // a second it holds REST_AFTER s more. Never under REST_MIN s or over REST_MAX; and it ends
+  // early rather than turn past what it refined (REST_TURN_FOR s of turn's worth, see startRefine).
+  const REST_MIN = 8, REST_MAX = 40, REST_AFTER = 5, REST_STILL = 1, REST_TURN_FOR = 25;
+  const SETTLE_PX = 48;
+  let restWhy = '', restRate = 0, restWaiting = false, restAt = 0, settleRead = null, settleReadAt = 0, settleReadN = 0, settleReads = 0, refAng = 0;
+  const settlePx = new Float32Array(SETTLE_PX * SETTLE_PX * 4);
   const REST_LEAD = 5;         // seconds of moving the pause pearl shows a rest coming (and then its settling)
   // A word under the pause pearl as a rest begins and ends.
   const sayEl = document.getElementById('live-say'), SAY_FOR = 3.5;
@@ -417,7 +425,7 @@ void main() {
     target = { x: 0, y: 0 }; aim = { x: 0, y: 0 }; vel = { x: 0, y: 0 };
     lastLook = performance.now() / 1000 - RETARGET + 1.0; steerT = 0; easeFor = 4; turnSteer = 0;
     // (the first rest a quarter of the usual way in, as if it had joined a cycle partway through)
-    holdUntil = -1e9; movedT = 0; nextRest = restIn() / 4; settleAt = null; restHolding = false;
+    holdUntil = -1e9; movedT = 0; nextRest = restIn() / 4; settleAt = null; restHolding = false; restWaiting = false;
     fade = 0; fadeDir = 1; leaving = false; frames = 0; still = 0; prevView = null; stopRefine(); refMix = 0;
     if (document.body.classList.contains('waiting')) fade = 1;   // (the canvas's own opacity does the cross-fade)
     load(order[(at + 1) % order.length]).catch(() => {});   // the next one compiles meanwhile
@@ -687,10 +695,11 @@ void main() {
     let ang = 0;
     if (restHolding && !paused) {
       const now = performance.now() / 1000, ease = turnEase();
-      for (let t = 0, T = Math.max(0, holdUntil - now) + 0.5; t < T; t += 0.1) ang += turnRate(turnT + t, ease) * 0.1;
+      const T = (restWaiting ? Math.max(0, restAt + REST_TURN_FOR - now) : Math.max(0, holdUntil - now)) + 0.5;
+      for (let t = 0; t < T; t += 0.1) ang += turnRate(turnT + t, ease) * 0.1;
       ang = Math.min(0.5, Math.abs(ang) * 1.15 + 0.002);
     }
-    refTurns = ang > 0;
+    refTurns = ang > 0; refAng = ang;
     const c = Math.cos(ang), sn = Math.sin(ang), h0 = h;
     [w, h] = [Math.ceil(w * c + h * sn), Math.ceil(w * sn + h * c)];
     if (!acc || acc.w !== w || acc.h !== h) { if (acc) acc.free(); acc = target2d(w, h, gl.RGBA32F); }
@@ -825,15 +834,24 @@ void main() {
     pausePearl._orbit = working ? { speed: ORBIT_SPEED * fresh, fresh, show: 1 - smooth(0.85, 1, prog) } : null;
     const left = holdUntil - performance.now() / 1000;
     const half = !paused && left > 0;
-    pausePearl._count = half ? left / holdLen : -1;
+    pausePearl._count = half ? (restWaiting ? 1 : left / holdLen) : -1;
+    pausePearl._call = half ? smooth(CALL_LEAD, 0, left) : 0;
     // A rest on its way: the ring fills in over its last REST_LEAD s of moving and its settling, so
     // it's full as the rest begins and runs down from there (sent as -1 - fill).
+    let coming = 0;
     if (!paused && !half && !leaving && fade >= 1 && view.h > minH * 8) {
       const tLeft = settleAt === null ? nextRest - movedT + REST_SETTLE : REST_SETTLE - (performance.now() / 1000 - settleAt);
       const fill = 1 - tLeft / (REST_LEAD + REST_SETTLE);
-      if (fill > 0) pausePearl._count = -1 - Math.min(1, fill);
+      if (fill > 0) { pausePearl._count = -1 - Math.min(1, fill); coming = fill; }
     }
-    pausePearl._call = half ? smooth(CALL_LEAD, 0, left) : 0;
+    // ...and the moon comes out early, warm and drifting slowly, turning into the busy pale one
+    // as the refinement starts (sent as a negative call glow: js/pearls.js).
+    if (restHolding && !refining && !paused) coming = 1;
+    if (coming > 0 && !working) {
+      const w = smooth(0, 0.25, coming);
+      pausePearl._orbit = { speed: 0.9, fresh: 1, show: w };
+      pausePearl._call = -w;
+    }
     const mode = paused ? 'paused' : half ? 'half' : 'playing';
     if (mode !== shownMode) {
       shownMode = mode;
@@ -872,7 +890,8 @@ void main() {
       if (settleAt !== null) {
         restEase = smooth(REST_SETTLE, 0, now - settleAt);
         if (now - settleAt >= REST_SETTLE) {
-          settleAt = null; holdUntil = now + REST_HOLD; holdLen = REST_HOLD; movedT = 0; nextRest = restIn();
+          restWaiting = canRefine && TAA; restAt = now; settleRead = null; settleReads = 0;
+          settleAt = null; holdUntil = now + (restWaiting ? REST_MAX : REST_HOLD); holdLen = restWaiting ? REST_MAX : REST_HOLD; movedT = 0; nextRest = restIn();
           steerT = 0; easeFor = REST_RESUME; vel = { x: 0, y: 0 }; target = { x: view.x, y: view.y }; aim = { ...target };
           restEase = 0; restHolding = true; say('resting and refining');
         }
@@ -905,6 +924,7 @@ void main() {
     if (wantRefine && !refining) startRefine();
     if (!wantRefine && refining) { if (refTurns && refN >= REF_SEED) bakeRefined(); stopRefine(); }
     if (refining) {
+      if (restWaiting && restHolding && !paused) watchSettle(now);
       if (!refineTick(now, raw) && !refTurns) return;   // nothing new: the canvas keeps its picture (unless it turns)
       // Faded in over REF_IN s: switched on in one frame, its sharper picture popped (measured: a
       // frame-to-frame change 4x the settling motion's).
@@ -918,9 +938,39 @@ void main() {
     if (poster && fade > 0.99 && !document.body.classList.contains('waiting')) poster.classList.add('gone');
   }
 
+  // A rest's refinement settling (REST_STILL): when it has, or has turned as far as it refined, the
+  // rest's end is set, and the pause pearl's ring (full till then) runs down to it.
+  function watchSettle(now) {
+    let done = refN >= REF_MAX || Math.abs(view.a - refView.a) > refAng - 0.01;
+    if (done) restWhy = refN >= REF_MAX ? 'max samples' : 'turned ' + Math.abs(view.a - refView.a).toFixed(3) + ' of ' + refAng.toFixed(3);
+    if (!done && now - settleReadAt >= 1 && refN > 0) {
+      const x = Math.max(0, (acc.w - SETTLE_PX) >> 1), y = Math.max(0, (acc.h - SETTLE_PX) >> 1);
+      const w = Math.min(SETTLE_PX, acc.w), h = Math.min(SETTLE_PX, acc.h);
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, acc.fb);
+      gl.readPixels(x, y, w, h, gl.RGBA, gl.FLOAT, settlePx);
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+      const n = w * h, mean = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) { const c = settlePx[i * 4 + 3] || 1; for (let k = 0; k < 3; k++) mean[i * 3 + k] = settlePx[i * 4 + k] / c; }
+      if (settleRead && refN > settleReadN) {
+        let d = 0;
+        for (let i = 0; i < n * 3; i++) d += Math.abs(mean[i] - settleRead[i]);
+        const rate = d / (n * 3) * 255 / (now - settleReadAt);   // (of 255, a second)
+        settleReads = rate < REST_STILL ? settleReads + 1 : 0;
+        restRate = rate;
+        if (settleReads >= 2) { done = true; restWhy = 'settled ' + rate.toFixed(2); }
+      }
+      if (!settleRead || refN < settleReadN) settleReads = 0;   // (begun again, smaller: watchFps)
+      settleRead = mean; settleReadAt = now; settleReadN = refN;
+    }
+    if (now - restAt > REST_MAX) { done = true; restWhy = 'max time'; }
+    if (!done) return;
+    restWaiting = false;
+    holdUntil = Math.max(now + REST_AFTER, restAt + REST_MIN); holdLen = holdUntil - now;
+  }
+
   // After the hand: carry on from here, still.
   function touched() {
-    holdUntil = performance.now() / 1000 + IDLE_RESUME; holdLen = IDLE_RESUME; settleAt = null; restHolding = false;
+    holdUntil = performance.now() / 1000 + IDLE_RESUME; holdLen = IDLE_RESUME; settleAt = null; restHolding = false; restWaiting = false;
     target = { x: view.x, y: view.y }; aim = { ...target }; vel = { x: 0, y: 0 }; steerT = 0; easeFor = 4; turnSteer = 0;
   }
   // The plane under a point on the canvas (client px).
@@ -997,7 +1047,7 @@ void main() {
   });
 
   window.UILive = {
-    next() { leaving = true; fadeDir = -1; holdUntil = -1e9; settleAt = null; restHolding = false; },
+    next() { leaving = true; fadeDir = -1; holdUntil = -1e9; settleAt = null; restHolding = false; restWaiting = false; },
     // Straight to that one (the gallery's full-tab view), from its start.
     show(id) {
       wanted = id;
@@ -1006,8 +1056,8 @@ void main() {
       if (i >= 0 && !(cur && cur.pick.id === id)) { if (starting) queued = i; else begin(i); }
     },
     // Play: off at once (no wait after a touch), up to speed in a second or so.
-    togglePause() { paused = !paused; restHolding = false; if (!paused) { steerT = 0; easeFor = 1.2; holdUntil = -1e9; settleAt = null; movedT = 0; } return paused; },
-    state: () => ({ fade, leaving, step, scale: steps()[step][0], still, refining, refN, refMix, bands, bandMs, frameInt, refDuty, refScale: refScaleNow(), acc: acc && acc.w + 'x' + acc.h, frames, h: view.h, a: view.a, minH }),
+    togglePause() { paused = !paused; restHolding = false; restWaiting = false; if (!paused) { steerT = 0; easeFor = 1.2; holdUntil = -1e9; settleAt = null; movedT = 0; } return paused; },
+    state: () => ({ restWhy, restRate, rest: restHolding ? (restWaiting ? 'settling' : 'ending') : '', restFor: restHolding ? +(performance.now() / 1000 - restAt).toFixed(1) : 0, fade, leaving, step, scale: steps()[step][0], still, refining, refN, refMix, bands, bandMs, frameInt, refDuty, refScale: refScaleNow(), acc: acc && acc.w + 'x' + acc.h, frames, h: view.h, a: view.a, minH }),
   };
 
   canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); cur = null; });

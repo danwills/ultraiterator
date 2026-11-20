@@ -273,7 +273,7 @@ void main() {
             vec4 m = uMore[i];
             float px = 1.0 / min(rc.z, rc.w);   // one px in q
             vec3 warm = vec3(1.0, 0.78, 0.48);
-            float call = m.z;
+            float call = max(m.z, 0.0), moonWarm = max(-m.z, 0.0);   // (a negative call: the moon out early, warm)
             if (call > 0.0) {
                 item.rgb = mix(item.rgb, warm * body, call * 0.6);
                 float halo = call * (1.0 - body) * exp(-max(d, 0.0) / (5.0 * uDpr)) * smoothstep(13.0 * uDpr, 6.0 * uDpr, d) * 0.8;   // (gone by the margin)
@@ -302,9 +302,11 @@ void main() {
                 vec3 pale = vec3(1.05, 1.02, 0.98) - vec3(0.12, 0.13, 0.08) * pow(mr, 2.0);
                 float fb = sqrt(moonF);   // (pale a while longer than it's fast)
                 vec3 mc = mix(dark, pale, fb) + vec3(0.9) * smoothstep(0.55, 0.0, length(mq - vec2(-0.35, -0.4)));
+                vec3 glowC = mix(vec3(1.0, 0.97, 0.92), vec3(1.0, 0.7, 0.38), moonWarm);
+                mc = mix(mc, mc * vec3(1.0, 0.72, 0.42), moonWarm * 0.85);
                 // While it's quick, a little glow round it, so it reads as bright, not grey.
                 float mg = fb * moonA * (1.0 - mo) * exp(-max(md, 0.0) / (2.2 * uDpr)) * 0.7;
-                item = vec4(vec3(1.0, 0.97, 0.92) * mg, mg) + item * (1.0 - mg);
+                item = vec4(glowC * mg, mg) + item * (1.0 - mg);
                 item = vec4(0.0, 0.0, 0.0, sh) * (1.0 - item.a) + item;
                 item = vec4(mc * mo, mo) + item * (1.0 - mo);
             }
