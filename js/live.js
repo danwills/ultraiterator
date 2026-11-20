@@ -152,7 +152,7 @@ void main() {
     frag = vec4(a.a > 0.0 ? a.rgb / a.a : vec3(0.0), 1.0);
 }`;
 
-  const ZOOM_RATE = 0.13;      // octaves a second (quicker since the rests show it sharp; was 0.085)
+  const ZOOM_RATE = 0.2;       // octaves a second (quicker since the rests show it sharp; was 0.085, then 0.13)
   const TURN_MAX = 0.015;      // the most it turns, radians a second (~0.9°; ~0.6° a second on average)
   let turnT = 0, turnPh = Math.random() * 6.283, turnSteer = 0;   // (turnSteer: s since a start or a touch)
   // Its rate, radians a second, at turn time t: a low, signed noise (two slow sines).
