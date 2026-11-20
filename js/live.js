@@ -211,7 +211,7 @@ void main() {
   const hashStr = str => { let h = 2166136261; for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619); return h >>> 0; };
   let rand = seeded(DAY);
   const ZOOM_RATE = 0.3;       // octaves a second (quicker since the rests show it sharp; was 0.085, 0.13, 0.2)
-  const TURN_MAX = 0.025;      // the most it turns, radians a second (~1.4°; ~1° a second on average; was 0.015)
+  const TURN_MAX = 0.035;      // the most it turns, radians a second (~2°; ~1.4° a second on average; was 0.015, 0.025)
   let turnT = 0, turnPh = 0, turnSteer = 0;   // (turnSteer: s since a start or a touch)
   // Its rate, radians a second, at turn time t: a low, signed noise (two slow sines).
   const turnRate = (t, ease) => TURN_MAX * ease * (0.6 * Math.sin(0.043 * t + turnPh) + 0.4 * Math.sin(0.0187 * t + 2.1 * turnPh));
