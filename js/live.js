@@ -196,9 +196,23 @@ void main() {
     frag = vec4(a.a > 0.0 ? a.rgb / a.a : vec3(0.0), 1.0);
 }`;
 
+  // Its randomness is seeded from the world's clock (UTC), so every copy of the page open at once
+  // shows the same (Dan: "all instances in the world will get the same seed at the same time"):
+  // the order's shuffled once a UTC day, it starts on the one for this SLOT of the day and goes on
+  // in that order, and each fractal's dive (its steering's picks, rests and turn) is seeded by the
+  // day and the fractal. They drift apart from there with each machine's speed (its rests last as
+  // long as it takes to refine), but each fractal's dive begins the same everywhere.
+  const SLOT = 120;            // seconds of the day a fractal, for where it starts
+  const DAY = Math.floor(Date.now() / 864e5);
+  function seeded(n) {   // mulberry32
+    let a = n >>> 0;
+    return () => { a = (a + 0x6D2B79F5) >>> 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  }
+  const hashStr = str => { let h = 2166136261; for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619); return h >>> 0; };
+  let rand = seeded(DAY);
   const ZOOM_RATE = 0.3;       // octaves a second (quicker since the rests show it sharp; was 0.085, 0.13, 0.2)
   const TURN_MAX = 0.025;      // the most it turns, radians a second (~1.4°; ~1° a second on average; was 0.015)
-  let turnT = 0, turnPh = Math.random() * 6.283, turnSteer = 0;   // (turnSteer: s since a start or a touch)
+  let turnT = 0, turnPh = 0, turnSteer = 0;   // (turnSteer: s since a start or a touch)
   // Its rate, radians a second, at turn time t: a low, signed noise (two slow sines).
   const turnRate = (t, ease) => TURN_MAX * ease * (0.6 * Math.sin(0.043 * t + turnPh) + 0.4 * Math.sin(0.0187 * t + 2.1 * turnPh));
   const DRIFT_MAX = 0.07;      // the most it drifts sideways, in screen heights a second (was 0.045)
@@ -245,7 +259,7 @@ void main() {
     try { n = (parseInt(localStorage.getItem('ultraiterator-resumes'), 10) || 0) + 1; localStorage.setItem('ultraiterator-resumes', n); } catch (e) { n = (onWeGo.n = (onWeGo.n || 0) + 1); }
     say(n % 20 === 0 ? "on y'va" : 'on we go');
   }
-  const restIn = () => REST_EVERY[0] + Math.random() * (REST_EVERY[1] - REST_EVERY[0]);
+  const restIn = () => REST_EVERY[0] + rand() * (REST_EVERY[1] - REST_EVERY[0]);
   const FADE = 1.5;            // seconds to fade between fractals
   const KEEP_MAX = 0.9;        // the history's most weight: about the last ten frames
   const KEEP_DEEP = 0.75;      // ...and at the end of its depth
@@ -435,6 +449,7 @@ void main() {
     starting = true;
     at = (i + order.length) % order.length;
     const pick = order[at];
+    rand = seeded(hashStr(DAY + ':' + pick.id)); turnPh = rand() * 6.283; turnT = 0;   // (this dive's own, the same everywhere)
     // A slow compile (a shader not ready yet, ~10 s for some): its 2k render shows meanwhile, not
     // black, and the live one cross-fades in over it once it's ready.
     const waitT = setTimeout(() => {
@@ -508,7 +523,7 @@ void main() {
       const sd = Math.sqrt(Math.max(s2 / 25 - (s / 25) * (s / 25), 0));
       const dx = x / PROBE - 0.5, dy = y / PROBE - 0.5, r = Math.hypot(dx, dy);
       const along = sp > 1e-4 && r > 1e-3 ? (dx * sv.x + dy * sv.y) / (r * sp) : 0;
-      cells.push({ x, y, r, along, score: sd * (1 - 1.8 * r * r) * (1 + 0.5 * along) + Math.random() * 2 });
+      cells.push({ x, y, r, along, score: sd * (1 - 1.8 * r * r) * (1 + 0.5 * along) + rand() * 2 });
     }
     cells.sort((p, q) => q.score - p.score);
     // (The probe's square, view.h each way, so only the middle of a wide screen is looked at.)
@@ -527,7 +542,7 @@ void main() {
     const deep = lookAhead(picks.map(at));
     let best = -1, pick = picks[0];
     picks.forEach((c, i) => {
-      const score = deep[i] * (1 - 1.2 * c.r * c.r) * (1 + 0.3 * c.along) * (c.straight ? 1.15 : 1) * (0.85 + 0.3 * Math.random());
+      const score = deep[i] * (1 - 1.2 * c.r * c.r) * (1 + 0.3 * c.along) * (c.straight ? 1.15 : 1) * (0.85 + 0.3 * rand());
       if (score > best) { best = score; pick = c; }
     });
     target = at(pick);
@@ -1129,8 +1144,10 @@ void main() {
       fetch('live/common.glsl').then(r => r.text()),
       fetch('live/picks.json').then(r => r.json()),
     ]);
-    order = picks.slice();
-    for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+    order = picks.slice().sort((a, b) => a.id < b.id ? -1 : 1);   // (the same start everywhere, whatever picks.json's order)
+    for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+    const slot = Math.floor((Date.now() % 864e5) / 1000 / SLOT) % order.length;
+    order = order.slice(slot).concat(order.slice(0, slot));
     // ?pick=<id or the start of its name>: start with that one.
     const want = (wanted || new URLSearchParams(location.search).get('pick') || '').toLowerCase();
     const first = want ? order.findIndex(p => p.id.startsWith(want) || p.name.toLowerCase().startsWith(want)) : -1;
