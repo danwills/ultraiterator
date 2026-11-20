@@ -36,10 +36,18 @@ in vec2 aPos;
 void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
   // The blend: this frame's samples with the history, read back where this pixel was in the
   // last frame's view (Catmull-Rom, so repeated resampling doesn't blur it).
+  // The history is at the screen's resolution, finer than the samples (the ladder's scale), and
+  // each sample counts where it was really taken, its jittered spot, not its pixel's middle: so
+  // the jitter fills in between them over a few frames, and the samples' own grid never shows.
+  // (With the history at the samples' size, enlarged to the screen afterwards, it did, whatever
+  // the filter: Dan, "still too squarey/griddy when zooming in".)
   const RESOLVE_FS = `#version 300 es
 precision highp float;
 uniform sampler2D uCur, uHist;
-uniform vec2 uRes;
+uniform vec2 uRes;         // the history's size
+uniform vec2 uCurRes;      // the samples'
+uniform float uCurH;       // the samples' view's height (it reaches a little further out than the history's)
+uniform vec2 uJitter;      // this frame's samples' sub-pixel offset
 uniform vec3 uView, uPrev;
 uniform vec2 uRot, uPrevRot;   // their turns, (cos, sin)
 uniform float uKeep;       // the history's weight (0: start afresh)
@@ -59,9 +67,26 @@ vec3 catmullRom(vec2 p) {
     for (int j = 0; j < 3; j++) for (int i = 0; i < 3; i++) c += texture(uHist, vec2(tx[i].x, ty[j].x)).rgb * tx[i].y * ty[j].y;
     return c;
 }
+// A sample's weight by its distance in sample pixels: a Gaussian about as wide as the refinement's.
+const float SIGMA = 0.45;
 void main() {
     vec2 f = gl_FragCoord.xy;
-    vec3 c = texelFetch(uCur, ivec2(f), 0).rgb;
+    // Where this pixel is among the samples, and this frame's estimate there: the 3x3 nearest
+    // samples, weighted by how far each one's spot is from it. cover says how near they came.
+    float k = (uView.z / uRes.y) * (uCurRes.y / uCurH);   // sample pixels a history pixel
+    vec2 q = (f - 0.5 * uRes) * k + 0.5 * uCurRes - uJitter;
+    ivec2 b = ivec2(floor(q)), hi = ivec2(uCurRes) - 1;
+    vec3 c = vec3(0.0), m1 = vec3(0.0), m2 = vec3(0.0);
+    float cover = 0.0;
+    for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+        ivec2 t = clamp(b + ivec2(i, j), ivec2(0), hi);
+        vec3 s = texelFetch(uCur, t, 0).rgb;
+        vec2 d = q - (vec2(b + ivec2(i, j)) + 0.5);
+        float w = exp(-dot(d, d) / (2.0 * SIGMA * SIGMA));
+        c += s * w; cover += w;
+        m1 += s; m2 += s * s;
+    }
+    c /= cover;
     vec2 o = uView.xy + uiTurn(uRot, (f - 0.5 * uRes) * (uView.z / uRes.y));
     vec2 pf = uiTurn(uPrevRot * vec2(1.0, -1.0), o - uPrev.xy) * (uRes.y / uPrev.z) + 0.5 * uRes;
     // Pixels drifting in at an edge have no history of their own: they take the nearest edge's,
@@ -72,21 +97,19 @@ void main() {
         // little more than its own spread. Noise (a wide spread) still averages away, but detail
         // the history hasn't caught up with (zooming in shows new detail every frame) comes
         // through rather than being fuzzed by older, coarser frames.
-        vec3 m1 = vec3(0.0), m2 = vec3(0.0);
-        for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
-            vec3 s = texelFetch(uCur, clamp(ivec2(f) + ivec2(i, j), ivec2(0), ivec2(uRes) - 1), 0).rgb;
-            m1 += s; m2 += s * s;
-        }
         m1 /= 9.0; m2 /= 9.0;
         vec3 sd = sqrt(max(m2 - m1 * m1, 0.0));
         // Moving fast, the history counts for less and is clipped closer (it smeared into
         // streaks on quick pans and zooms), and pixels that came in past the edge only borrow
         // the edge's history when they're within a pixel or two of it.
-        float speed = length(pf - f);   // this pixel's travel since last frame, in pixels
-        float outside = length(pf - clamp(pf, vec2(1.5), uRes - 1.5));
+        // (Both in sample pixels, as they were tuned before the history was finer.)
+        float speed = length(pf - f) * k;   // this pixel's travel since last frame
+        float outside = length(pf - clamp(pf, vec2(1.5), uRes - 1.5)) * k;
         float clip = uClip / (1.0 + 0.12 * speed);
         h = clamp(h, m1 - clip * sd, m1 + clip * sd);
-        c = mix(c, h, uKeep * exp(-outside / 2.5) / (1.0 + 0.08 * speed));
+        // A pixel between this frame's samples takes less of them, the rest from its history.
+        float keep = uKeep * exp(-outside / 2.5) / (1.0 + 0.08 * speed);
+        c = mix(h, c, (1.0 - keep) * min(cover, 1.0));
     }
     frag = vec4(c, 1.0);
 }`;
@@ -223,7 +246,7 @@ void main() {
   // adds one sample a pixel to a running sum, at a fresh sub-pixel spot (Halton, so they never
   // repeat), spread as a Gaussian of REF_SIGMA px, so after N frames it's as if rendered at √N×
   // and downsampled with a soft filter: 2× by 4, 8× by 64, 32× by REF_MAX. On a desktop (a mouse
-  // to hover with) it refines at the screen's full resolution; a phone keeps its own, for its
+  // to hover with) it refines at the screen's full resolution; a phone at a CSS pixel, for its
   // battery. Once done it stops drawing (the canvas keeps its picture).
   const STILL_REFINE = 15;
   const REF_SIGMA = 0.42;
@@ -353,7 +376,7 @@ void main() {
   function uniforms(p, names) { const u = {}; for (const n of names) u[n] = gl.getUniformLocation(p, n); return u; }
   const resolve = link(RESOLVE_FS).p, show = link(SHOW_FS).p, bake = link(BAKE_FS).p;
   const BU = uniforms(bake, ['uAcc', 'uRes', 'uAccRes', 'uView', 'uRefView', 'uRot', 'uRefRot']);
-  const RU = uniforms(resolve, ['uCur', 'uHist', 'uRes', 'uView', 'uPrev', 'uKeep', 'uClip', 'uRot', 'uPrevRot']);
+  const RU = uniforms(resolve, ['uCur', 'uHist', 'uRes', 'uCurRes', 'uCurH', 'uJitter', 'uView', 'uPrev', 'uKeep', 'uClip', 'uRot', 'uPrevRot']);
   const SU = uniforms(show, ['uTex', 'uAcc', 'uFade', 'uRefMix', 'uSeed', 'uRes', 'uAccRes', 'uView', 'uRefView', 'uRot', 'uRefRot', 'uHistView', 'uHistRot', 'uSmooth', 'uHistRes']);
 
   // Its gradients: the PNG's top half, UF's rows (the bottom half is the same in linear light).
@@ -567,22 +590,31 @@ void main() {
     if (PIN_STEP !== null) step = Math.min(PIN_STEP, top);
   }
 
-  // The moving view's buffers, at the ladder's scale, and HIST_MARGIN of the height more all round:
-  // a blend's edge pixels have the least history (things come in there, reprojected from nowhere)
-  // and sparkled, so they're drawn but kept just off the screen. ov(v): v as the buffers see it.
-  const HIST_MARGIN = 0.03;
-  let histOver = 1;
-  const ov = v => ({ ...v, h: v.h * histOver });
+  // The moving view's buffers: its samples at the ladder's scale, and its blend (the history) at
+  // the screen's (at most UP_MAX times the samples'), each with HIST_MARGIN of the height more all
+  // round: a blend's edge pixels have the least history (things come in there, reprojected from
+  // nowhere) and sparkled, so they're drawn but kept just off the screen. ov(v): v as the samples
+  // see it; histOver, the blend's own margin.
+  const HIST_MARGIN = 0.03, UP_MAX = 4;
+  let histOver = 1, curOver = 1;
+  const ov = v => ({ ...v, h: v.h * curOver });
   function resize() {
     const r = canvas.getBoundingClientRect();
-    const s = steps()[step][0];
-    const hi = Math.max(16, Math.round(r.height * s)), m = Math.ceil(hi * HIST_MARGIN) + 2;
-    const w = Math.max(16, Math.round(r.width * s)) + 2 * m, h = hi + 2 * m;
-    histOver = h / hi;
-    if (sampled && sampled.w === w && sampled.h === h) return;
+    const margined = s => {
+      const hi = Math.max(16, Math.round(r.height * s)), m = Math.ceil(hi * HIST_MARGIN) + 2;
+      return { w: Math.max(16, Math.round(r.width * s)) + 2 * m, h: hi + 2 * m, over: (hi + 2 * m) / hi };
+    };
+    const s = steps()[step][0], lo = margined(s), up = margined(Math.max(s, Math.min(refScaleNow(), s * UP_MAX)));
+    if (!sampled || sampled.w !== lo.w || sampled.h !== lo.h) {
+      if (sampled) sampled.free();
+      sampled = target2d(lo.w, lo.h, gl.RGBA8);
+      curOver = lo.over;
+    }
+    // (A new ladder step alone keeps the blend as it is: it's at the screen's size either way.)
+    const w = up.w, h = up.h;
+    if (hist[0] && hist[0].w === w && hist[0].h === h) return;
+    histOver = up.over;
     const old = hist[histAt] || null;
-    if (sampled) sampled.free();
-    sampled = target2d(w, h, gl.RGBA8);
     const fresh = [target2d(w, h, floatHist ? gl.RGBA16F : gl.RGBA8), target2d(w, h, floatHist ? gl.RGBA16F : gl.RGBA8)];
     if (old && frames > 0) {
       // A new size (the quality ladder): carry the old blend over, scaled, rather than starting
@@ -605,14 +637,18 @@ void main() {
     const w = sampled.w, h = sampled.h;
     jitterI = (jitterI % 64) + 1;
     gl.bindFramebuffer(gl.FRAMEBUFFER, sampled.fb);
-    drawFractal(w, h, ov(view), steps()[step][1], halton(jitterI, 2) - 0.5, halton(jitterI, 3) - 0.5);
+    const jx = halton(jitterI, 2) - 0.5, jy = halton(jitterI, 3) - 0.5;
+    drawFractal(w, h, ov(view), steps()[step][1], jx, jy);
     const src = hist[histAt], dst = hist[1 - histAt];
     gl.bindFramebuffer(gl.FRAMEBUFFER, dst.fb);
     gl.useProgram(resolve);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, sampled.tex);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, src.tex);
     gl.uniform1i(RU.uCur, 0); gl.uniform1i(RU.uHist, 1);
-    gl.uniform2f(RU.uRes, w, h);
+    gl.uniform2f(RU.uRes, dst.w, dst.h);
+    gl.uniform2f(RU.uCurRes, w, h);
+    gl.uniform1f(RU.uCurH, view.h * curOver);
+    gl.uniform2f(RU.uJitter, jx, jy);
     gl.uniform3f(RU.uView, view.x, view.y, view.h * histOver);
     const pv = prevView || view;
     gl.uniform3f(RU.uPrev, pv.x, pv.y, pv.h * histOver);
@@ -626,7 +662,7 @@ void main() {
       : low ? LOW_KEEP : KEEP_MAX - (KEEP_MAX - KEEP_DEEP) * deep;
     gl.uniform1f(RU.uKeep, frames > 0 && TAA ? Math.min(1 - 1 / (frames + 1), keepMax) : 0);
     gl.uniform1f(RU.uClip, still > 0 ? 1e3 : low ? LOW_CLIP : CLIP - (CLIP - CLIP_DEEP) * deep);
-    quadDraw(w, h);
+    quadDraw(dst.w, dst.h);
     histAt = 1 - histAt;
     prevView = { ...view };
     frames++;
@@ -635,7 +671,9 @@ void main() {
   let refDuty = REF_DUTY, refFps = [], refFpsAt = 0;
   let refScale = null;   // CSS px a pixel it refines at (null: the most for this screen)
   try { const v = parseFloat(localStorage.getItem(REF_SCALE_KEY)); if (v > 0) refScale = v; } catch (e) {}
-  const refScaleMax = () => HI_OK ? Math.min(window.devicePixelRatio || 1, 2) : steps()[step][0];
+  // (A phone's at a CSS pixel at most, not its screen's own: its samples' grid, enlarged by the
+  // browser, showed as much as a desktop's did.)
+  const refScaleMax = () => HI_OK ? Math.min(window.devicePixelRatio || 1, 2) : Math.max(steps()[step][0], Math.min(window.devicePixelRatio || 1, 1));
   const refScaleNow = () => Math.max(steps()[step][0], Math.min(refScaleMax(), refScale || 1e9));
   let baseFrame = 1 / 60;   // the page's frame time while moving, refinement's yardstick
   let refComfort = 0, refUpAt = 0, refUpWait = REF_UP_WAIT, refWentUp = false;
