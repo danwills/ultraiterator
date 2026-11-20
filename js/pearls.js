@@ -25,7 +25,7 @@ uniform float uDpr;
 uniform int uCount;
 uniform vec4 uRect[${MAX}];   // middle and half size, px, y down
 uniform vec4 uKind[${MAX}];   // kind (0 pebble, 1 pearl), look, seed, hover 0..1
-uniform vec4 uMore[${MAX}];   // the state pearl's x: glow, y: countdown left 0..1 (<0 none), z: its call glow
+uniform vec4 uMore[${MAX}];   // the state pearl's x: glow, y: countdown left 0..1 (-1 none; under -1, a rest coming, filled -1 - y), z: its call glow
 out vec4 frag;
 
 const vec3 LUMA = vec3(0.299, 0.587, 0.114);
@@ -321,6 +321,15 @@ void main() {
                 float ring = (1.0 - smoothstep(w * 0.6, w * 0.6 + px * uDpr, abs(length(q) - 0.74))) * step(fr, m.y);
                 float a = max(bars, ring) * body * 0.92;
                 item.rgb = mix(item.rgb, ink * item.a, a);
+            }
+            if (m.y < -1.0 && body > 0.0) {
+                // A rest coming: the same ring filling in clockwise from the top (no bars: the
+                // pause glyph's still showing), fading in as it starts.
+                float fill = -1.0 - m.y, w = 1.6 * px * uDpr;
+                float fr = fract(atan(q.x, -q.y) / 6.2831853 + 1.0);
+                float ring = (1.0 - smoothstep(w * 0.6, w * 0.6 + px * uDpr, abs(length(q) - 0.74))) * step(fr, fill);
+                float a = ring * body * 0.85 * smoothstep(0.0, 0.12, fill);
+                item.rgb = mix(item.rgb, vec3(1.0) * item.a, a);
             }
         }
         if (kind == 0) {

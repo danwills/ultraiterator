@@ -174,13 +174,18 @@ void main() {
   let turnT = 0, turnPh = Math.random() * 6.283, turnSteer = 0;   // (turnSteer: s since a start or a touch)
   // Its rate, radians a second, at turn time t: a low, signed noise (two slow sines).
   const turnRate = (t, ease) => TURN_MAX * ease * (0.6 * Math.sin(0.043 * t + turnPh) + 0.4 * Math.sin(0.0187 * t + 2.1 * turnPh));
-  const DRIFT_MAX = 0.045;     // the most it drifts sideways, in screen heights a second
-  const RETARGET = 4.5;        // seconds between looks for detail
+  const DRIFT_MAX = 0.07;      // the most it drifts sideways, in screen heights a second (was 0.045)
+  const RETARGET = 3;          // seconds between looks for detail (was 4.5)
   const PROBE = 40;            // the look's size, px square
+  // Looking ahead: the best LOOK_K spots in the look (and straight on) are each drawn small,
+  // LOOK_DEEP times deeper, and it heads for the one that stays detailed all over down there.
+  const LOOK_K = 6, LOOK_DEEP = [4, 12], LOOK_PX = 24;
+  const STEER_OLD = new URLSearchParams(location.search).get('steer') === 'old';   // (?steer=old: the old way, to compare)
   const IDLE_RESUME = 9;       // seconds after a touch before it steers itself again
   // Rests: the dive eases to a stop now and then (after REST_EVERY s of moving) and holds still for
   // REST_HOLD s, so the refinement gets to show; the pause pearl counts it down as after a touch.
-  const REST_EVERY = [15, 30], REST_HOLD = 10, REST_SETTLE = 3, REST_RESUME = 3;
+  const REST_EVERY = [15, 30], REST_HOLD = 15, REST_SETTLE = 3, REST_RESUME = 3;
+  const REST_LEAD = 5;         // seconds of moving the pause pearl shows a rest coming (and then its settling)
   // A word under the pause pearl as a rest begins and ends.
   const sayEl = document.getElementById('live-say'), SAY_FOR = 3.5;
   let sayTimer = 0, restHolding = false;
@@ -236,7 +241,9 @@ void main() {
   const REF_UP_WAIT = 300;
   // Slower than this a frame even at the ladder's bottom: it gives up and shows the picture.
   const TOO_SLOW = 0.3;
-  const REF_SEED = 6;          // the moving view's picture's worth, in samples, as refinement begins (SHOW_FS)
+  const REF_SEED = 6;          // the moving view's picture's worth, in samples, as refinement begins (SHOW_FS)...
+  const REF_SEED_GO = 8;       // ...shrinking by e each this many samples (Dan: at a steady 6 its lumpy low-res
+                               // still showed through the refined one: 17% at 30 samples; now 5% at 16, 1% at 24)
   const REF_IN = 1.5;          // seconds the refinement takes to fade in
   let refStartT = 0;
   const REF_OUT = 0.5;         // seconds to fade back out once the view moves
@@ -301,6 +308,8 @@ void main() {
   }
   const probe = target2d(PROBE, PROBE, gl.RGBA8);
   const probePx = new Uint8Array(PROBE * PROBE * 4);
+  const ahead = target2d((LOOK_K + 1) * LOOK_PX, LOOK_DEEP.length * LOOK_PX, gl.RGBA8);
+  const aheadPx = new Uint8Array(ahead.w * ahead.h * 4);
   let sampled = null, hist = [null, null], histAt = 0;
 
   function shader(type, src) {
@@ -435,9 +444,11 @@ void main() {
     quadDraw(w, h);
   }
 
-  // Where's the detail? A small render of the view, and the cell with the most contrast among
-  // its neighbours, leaning towards the middle and towards the way it's already drifting, so
-  // its course bends gently rather than doubling back.
+  // Where's the detail? A small render of the view, and the cells with the most contrast among
+  // their neighbours, leaning towards the middle and towards the way it's already drifting, so
+  // its course bends gently rather than doubling back. Contrast alone liked the edge of a big
+  // flat region, or a lone line in a blank space (Dan), and only saw this depth, so the best few
+  // (and straight on) are each looked at deeper (lookAhead) before it picks.
   function look() {
     gl.bindFramebuffer(gl.FRAMEBUFFER, probe.fb);
     drawFractal(PROBE, PROBE, view, 1, 0, 0);
@@ -446,19 +457,73 @@ void main() {
     const L = (x, y) => { const k = (y * PROBE + x) * 4; return 0.3 * probePx[k] + 0.59 * probePx[k + 1] + 0.11 * probePx[k + 2]; };
     const sp = Math.hypot(vel.x, vel.y), ca = Math.cos(view.a), sa = Math.sin(view.a);
     const sv = { x: ca * vel.x + sa * vel.y, y: -sa * vel.x + ca * vel.y };   // (its drift on screen)
-    let best = -1, bx = PROBE / 2, by = PROBE / 2;
+    const cells = [];
     for (let y = 4; y < PROBE - 4; y += 2) for (let x = 4; x < PROBE - 4; x += 2) {
       let s = 0, s2 = 0;
       for (let j = -2; j <= 2; j++) for (let i = -2; i <= 2; i++) { const l = L(x + i, y + j); s += l; s2 += l * l; }
       const sd = Math.sqrt(Math.max(s2 / 25 - (s / 25) * (s / 25), 0));
       const dx = x / PROBE - 0.5, dy = y / PROBE - 0.5, r = Math.hypot(dx, dy);
       const along = sp > 1e-4 && r > 1e-3 ? (dx * sv.x + dy * sv.y) / (r * sp) : 0;
-      const score = sd * (1 - 1.8 * r * r) * (1 + 0.5 * along) + Math.random() * 2;
-      if (score > best) { best = score; bx = x; by = y; }
+      cells.push({ x, y, r, along, score: sd * (1 - 1.8 * r * r) * (1 + 0.5 * along) + Math.random() * 2 });
     }
+    cells.sort((p, q) => q.score - p.score);
     // (The probe's square, view.h each way, so only the middle of a wide screen is looked at.)
-    const ox = (bx / PROBE - 0.5) * view.h * 0.7, oy = (by / PROBE - 0.5) * view.h * 0.7;
-    target = { x: view.x + ca * ox - sa * oy, y: view.y + sa * ox + ca * oy };
+    const reach = STEER_OLD ? 0.7 : 0.55;
+    const at = c => {
+      const ox = (c.x / PROBE - 0.5) * view.h * reach, oy = (c.y / PROBE - 0.5) * view.h * reach;
+      return { x: view.x + ca * ox - sa * oy, y: view.y + sa * ox + ca * oy };
+    };
+    if (STEER_OLD) { target = at(cells[0]); return; }
+    // The best few, far enough apart to be different places, and straight on.
+    const picks = [{ x: PROBE / 2, y: PROBE / 2, r: 0, along: 0, straight: true }];
+    for (const c of cells) {
+      if (picks.length > LOOK_K) break;
+      if (picks.every(p => Math.hypot(p.x - c.x, p.y - c.y) >= 6)) picks.push(c);
+    }
+    const deep = lookAhead(picks.map(at));
+    let best = -1, pick = picks[0];
+    picks.forEach((c, i) => {
+      const score = deep[i] * (1 - 1.2 * c.r * c.r) * (1 + 0.3 * c.along) * (c.straight ? 1.15 : 1) * (0.85 + 0.3 * Math.random());
+      if (score > best) { best = score; pick = c; }
+    });
+    target = at(pick);
+  }
+  // Each spot drawn LOOK_PX square at each of LOOK_DEEP, all into one small target (each tile's
+  // view shifted by its offset, so the port's shader needn't know), and read back at once. Its
+  // score is how much of it has detail at both depths (the geometric mean), times how strong.
+  function lookAhead(spots) {
+    const D = LOOK_PX, ca = Math.cos(view.a), sa = Math.sin(view.a);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, ahead.fb);
+    const u = cur.uni;
+    gl.useProgram(cur.prog);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, cur.tex);
+    gl.uniform1i(u.uGrad, 0); gl.uniform1i(u.uAA, 1);
+    gl.uniform2f(u.uRes, D, D); gl.uniform2f(u.uJitter, 0, 0); gl.uniform2f(u.uRot, ca, sa);
+    gl.bindBuffer(gl.ARRAY_BUFFER, quad); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    spots.forEach((p, i) => LOOK_DEEP.forEach((k, j) => {
+      const h = view.h / k, px = h / D, ox = i * D * px, oy = j * D * px;
+      gl.viewport(i * D, j * D, D, D);
+      gl.uniform3f(u.uView, p.x - (ca * ox - sa * oy), p.y - (sa * ox + ca * oy), h);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }));
+    gl.readPixels(0, 0, ahead.w, ahead.h, gl.RGBA, gl.UNSIGNED_BYTE, aheadPx);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    const W = ahead.w, L = (x, y) => { const k = (y * W + x) * 4; return 0.3 * aheadPx[k] + 0.59 * aheadPx[k + 1] + 0.11 * aheadPx[k + 2]; };
+    return spots.map((p, i) => {
+      let g = 1;
+      LOOK_DEEP.forEach((k, j) => {
+        let busy = 0, n = 0, sum = 0;
+        for (let y = 1; y < D - 1; y++) for (let x = 1; x < D - 1; x++) {
+          let s = 0, s2 = 0;
+          for (let b = -1; b <= 1; b++) for (let a = -1; a <= 1; a++) { const l = L(i * D + x + a, j * D + y + b); s += l; s2 += l * l; }
+          const sd = Math.sqrt(Math.max(s2 / 9 - (s / 9) * (s / 9), 0));
+          if (sd > 6) busy++;
+          sum += Math.min(sd, 40); n++;
+        }
+        g *= (busy / n) * (0.4 + sum / n / 40) + 1e-3;
+      });
+      return Math.sqrt(g);
+    });
   }
 
   // Quality: a step on LADDER, moved by how long frames take. A step that proved too slow is
@@ -722,7 +787,7 @@ void main() {
     gl.uniform1i(SU.uTex, 0); gl.uniform1i(SU.uAcc, 1);
     gl.uniform1f(SU.uFade, fade * fade * (3 - 2 * fade));
     gl.uniform1f(SU.uRefMix, acc ? refMix * refMix * (3 - 2 * refMix) : 0);
-    gl.uniform1f(SU.uSeed, REF_SEED);
+    gl.uniform1f(SU.uSeed, REF_SEED * Math.exp(-refN / REF_SEED_GO));   // (refN kept while it fades back out)
     gl.uniform2f(SU.uRes, w, h);
     gl.uniform2f(SU.uAccRes, acc ? acc.w : 1, acc ? acc.h : 1);
     gl.uniform3f(SU.uView, view.x, view.y, view.h);
@@ -761,6 +826,13 @@ void main() {
     const left = holdUntil - performance.now() / 1000;
     const half = !paused && left > 0;
     pausePearl._count = half ? left / holdLen : -1;
+    // A rest on its way: the ring fills in over its last REST_LEAD s of moving and its settling, so
+    // it's full as the rest begins and runs down from there (sent as -1 - fill).
+    if (!paused && !half && !leaving && fade >= 1 && view.h > minH * 8) {
+      const tLeft = settleAt === null ? nextRest - movedT + REST_SETTLE : REST_SETTLE - (performance.now() / 1000 - settleAt);
+      const fill = 1 - tLeft / (REST_LEAD + REST_SETTLE);
+      if (fill > 0) pausePearl._count = -1 - Math.min(1, fill);
+    }
     pausePearl._call = half ? smooth(CALL_LEAD, 0, left) : 0;
     const mode = paused ? 'paused' : half ? 'half' : 'playing';
     if (mode !== shownMode) {
