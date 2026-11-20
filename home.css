@@ -27,6 +27,11 @@ p { margin: .5rem 0; }
 .poster { background: center / cover no-repeat; filter: blur(14px) brightness(.7); transform: scale(1.06); transition: opacity 1.2s; }
 .poster.gone { opacity: 0; }
 body.no-live .hero canvas { display: none; }
+/* Waiting for a fractal to compile (js/live.js): its render, as the live one will start, and the
+   canvas cross-fading in over it when ready. */
+.hero canvas { transition: opacity 1s ease; }
+body.waiting .hero canvas { opacity: 0; transition: opacity .3s ease; }
+body.waiting .poster { filter: none; transform: none; background-size: auto 100%; opacity: 1; transition: opacity .6s; }
 body.no-live .poster { filter: none; transform: none; opacity: 1; }
 body.no-live .hero-controls { display: none; }
 .hero-text { position: absolute; left: 0; right: 0; bottom: 0; padding: 0 1rem 5.2rem; pointer-events: none;

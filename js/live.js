@@ -201,6 +201,8 @@ void main() {
   // Slower than this a frame even at the ladder's bottom: it gives up and shows the picture.
   const TOO_SLOW = 0.3;
   const REF_SEED = 6;          // the moving view's picture's worth, in samples, as refinement begins (SHOW_FS)
+  const REF_IN = 1.5;          // seconds the refinement takes to fade in
+  let refStartT = 0;
   const REF_OUT = 0.5;         // seconds to fade back out once the view moves
   // Without float blending: a plain running average in the moving view's blend instead, this long.
   const STILL_FRAMES = 128;
@@ -315,11 +317,13 @@ void main() {
     return tex;
   }
 
+  const SLOW = +(new URLSearchParams(location.search).get('slow') || 0);
   const loaded = new Map();
   function load(pick) {
     if (!loaded.has(pick.id)) {
       loaded.set(pick.id, (async () => {
         const src = await (await fetch('live/' + pick.id + '.glsl')).text();
+        if (SLOW) await new Promise(r => setTimeout(r, SLOW));   // (?slow=ms: a slow compile, to test the wait)
         const [prog, tex] = await Promise.all([program(HEAD + common + src + MAIN), gradient(pick.id)]);
         return { pick, prog, tex, uni: uniforms(prog, ['uGrad', 'uAA', 'uView', 'uRes', 'uJitter', 'uRot']) };
       })());
@@ -332,13 +336,29 @@ void main() {
     if (poster) poster.style.backgroundImage = 'url(live/' + pick.id + '.webp)';
   }
 
+  // (starting: a begin is waiting for its fractal; frames meanwhile mustn't start more. They had,
+  // one a frame, each the next along, compiling several at once: black for ages between fractals.)
+  let starting = false, beganAt = 0, queued = null;
+  const WAIT_SHOW = 0.4;   // s of waiting before the render's shown   // (queued: a show() that came while starting)
   async function begin(i) {
+    if (starting) return;
+    starting = true;
     at = (i + order.length) % order.length;
     const pick = order[at];
+    // A slow compile (a shader not ready yet, ~10 s for some): its 2k render shows meanwhile, not
+    // black, and the live one cross-fades in over it once it's ready.
+    const waitT = setTimeout(() => {
+      if (!starting) return;
+      if (poster) { poster.style.backgroundImage = 'url(live/' + pick.id + '.webp)'; poster.classList.remove('gone'); }
+      document.body.classList.add('waiting');
+    }, WAIT_SHOW * 1000);
     let next;
     try { next = await load(pick); }
-    catch (e) { console.warn('live: ' + pick.id + ' did not compile', e); order.splice(at, 1); if (order.length) begin(at); return; }
-    cur = next;
+    catch (e) { console.warn('live: ' + pick.id + ' did not compile', e); order.splice(at, 1); starting = false; if (order.length) begin(at); return; }
+    starting = false;
+    clearTimeout(waitT);
+    if (queued !== null) { const q = queued; queued = null; begin(q); return; }
+    cur = next; beganAt = performance.now() / 1000;
     showName(pick);
     // The whole 2k to start with, then in until fp32 runs out (its depth past the 2k).
     startH = 1.0;
@@ -353,6 +373,7 @@ void main() {
     // (the first rest a quarter of the usual way in, as if it had joined a cycle partway through)
     holdUntil = -1e9; movedT = 0; nextRest = restIn() / 4; settleAt = null; restHolding = false;
     fade = 0; fadeDir = 1; leaving = false; frames = 0; still = 0; prevView = null; stopRefine(); refMix = 0;
+    if (document.body.classList.contains('waiting')) fade = 1;   // (the canvas's own opacity does the cross-fade)
     load(order[(at + 1) % order.length]).catch(() => {});   // the next one compiles meanwhile
   }
 
@@ -545,7 +566,7 @@ void main() {
     if (!acc || acc.w !== w || acc.h !== h) { if (acc) acc.free(); acc = target2d(w, h, gl.RGBA32F); }
     gl.bindFramebuffer(gl.FRAMEBUFFER, acc.fb);
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
-    refN = 0; refView = { ...view }; refining = true; band = 0; bands = 1; refRest = 0; bandMs = 0;
+    refN = 0; refView = { ...view }; refining = true; refStartT = performance.now() / 1000; band = 0; bands = 1; refRest = 0; bandMs = 0;
     refFps = []; refFpsAt = performance.now() / 1000;
   }
   function stopRefine() {
@@ -624,7 +645,10 @@ void main() {
   }
 
   function present() {
-    const w = refMix > 0 ? acc.w : sampled.w, h = refMix > 0 ? acc.h : sampled.h;
+    // Always at the refinement's size (the moving view's blend is scaled up here): switching the
+    // canvas between the two sizes as refinement began was a one-frame jump of its own.
+    const r = canvas.getBoundingClientRect(), s = refScaleNow();
+    const w = Math.max(16, Math.round(r.width * s)), h = Math.max(16, Math.round(r.height * s));
     if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.useProgram(show);
@@ -632,7 +656,7 @@ void main() {
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, acc ? acc.tex : null);
     gl.uniform1i(SU.uTex, 0); gl.uniform1i(SU.uAcc, 1);
     gl.uniform1f(SU.uFade, fade * fade * (3 - 2 * fade));
-    gl.uniform1f(SU.uRefMix, acc ? refMix : 0);
+    gl.uniform1f(SU.uRefMix, acc ? refMix * refMix * (3 - 2 * refMix) : 0);
     gl.uniform1f(SU.uSeed, REF_SEED);
     gl.uniform2f(SU.uRes, w, h);
     gl.uniform2f(SU.uAccRes, acc ? acc.w : 1, acc ? acc.h : 1);
@@ -729,7 +753,7 @@ void main() {
     }
     // Fading in only once the blend has a few frames (or the refinement is under way): the very
     // first frames are single noisy samples.
-    if (fadeDir < 0 || frames >= READY_FRAMES || refining) fade = Math.min(1, Math.max(0, fade + fadeDir * dt / FADE));
+    if (fadeDir < 0 || frames >= READY_FRAMES || refining || now - beganAt > 1) fade = Math.min(1, Math.max(0, fade + fadeDir * dt / FADE));
     if (leaving && fade <= 0) { begin(at + 1); return; }
     const pv = prevView;
     still = pv && pv.x === view.x && pv.y === view.y && pv.h === view.h && pv.a === view.a ? still + 1 : 0;
@@ -738,13 +762,16 @@ void main() {
     if (!wantRefine && refining) stopRefine();
     if (refining) {
       if (!refineTick(now, raw)) return;   // nothing new: the canvas keeps its picture
-      refMix = 1;
+      // Faded in over REF_IN s: switched on in one frame, its sharper picture popped (measured: a
+      // frame-to-frame change 4x the settling motion's).
+      refMix = Math.min(1, (now - refStartT) / REF_IN);
     } else {
       refMix = Math.max(0, refMix - dt / REF_OUT);
       renderTaa();
     }
     present();
-    if (poster && fade > 0.99) poster.classList.add('gone');
+    if (document.body.classList.contains('waiting') && (frames >= READY_FRAMES || now - beganAt > 1)) document.body.classList.remove('waiting');
+    if (poster && fade > 0.99 && !document.body.classList.contains('waiting')) poster.classList.add('gone');
   }
 
   // After the hand: carry on from here, still.
@@ -832,7 +859,7 @@ void main() {
       wanted = id;
       if (!order.length) return;   // (still loading: it starts with it)
       const i = order.findIndex(p => p.id === id);
-      if (i >= 0 && !(cur && cur.pick.id === id)) begin(i);
+      if (i >= 0 && !(cur && cur.pick.id === id)) { if (starting) queued = i; else begin(i); }
     },
     // Play: off at once (no wait after a touch), up to speed in a second or so.
     togglePause() { paused = !paused; restHolding = false; if (!paused) { steerT = 0; easeFor = 1.2; holdUntil = -1e9; settleAt = null; movedT = 0; } return paused; },
