@@ -25,6 +25,9 @@ uniform float uDpr;
 uniform int uCount;
 uniform vec4 uRect[${MAX}];   // middle and half size, px, y down
 uniform vec4 uKind[${MAX}];   // kind (0 pebble, 1 pearl), look, seed, hover 0..1
+uniform sampler2D uBack;     // the live hero's picture, mipmapped (js/live.js shareBackdrop), top row first
+uniform vec4 uBackRect;      // where it is: left, top, width, height, px, y down
+uniform float uBackOn;       // 0..1: whether there is one
 uniform vec4 uMore[${MAX}];   // the state pearl's x: glow, y: countdown left 0..1 (-1 none; under -1, a rest coming, filled -1 - y), z: its call glow
 out vec4 frag;
 
@@ -64,10 +67,22 @@ vec3 voro(vec2 x) {
     return vec3(sqrt(d1), id, sqrt(d2) - sqrt(d1));
 }
 // The night sky the page sits under, reflected.
+// The gem being drawn: its middle and radius (px), and how much the hero's picture is behind it.
+vec2 gC; float gR, gOn;
+vec3 backAt(vec2 px) {
+    vec2 uv = clamp((px - uBackRect.xy) / uBackRect.zw, 0.0, 1.0);
+    // (blurred to about the gem's size: its light, not the picture's grain)
+    float lod = log2(max(gR * 0.8 * float(textureSize(uBack, 0).x) / uBackRect.z, 1.0));
+    return textureLod(uBack, uv, lod).rgb;
+}
+// What a gem reflects: a dim sky, or over the live hero its picture round about (the rim of a
+// round thing shows what's off to that side).
 vec3 env(vec3 n) {
     float up = clamp(-n.y * 0.8 + n.z * 0.3, -1.0, 1.0);
     vec3 top = vec3(0.10, 0.12, 0.22), hor = vec3(0.16, 0.13, 0.15), gnd = vec3(0.03, 0.025, 0.03);
-    return up > 0.0 ? mix(hor, top, up) : mix(hor, gnd, -up);
+    vec3 sky = up > 0.0 ? mix(hor, top, up) : mix(hor, gnd, -up);
+    if (gOn > 0.0) sky = mix(sky, backAt(gC + n.xy * gR * 2.4) * 1.15, gOn);
+    return sky;
 }
 const vec3 L = normalize(vec3(-0.5, -0.65, 0.75));
 
@@ -233,6 +248,9 @@ void main() {
         if (abs(rel.x) > rc.z + marg || abs(rel.y) > rc.w + marg) continue;
         int kind = int(k.x + 0.5), look = int(k.y + 0.5);
         float seed = k.z, hover = k.w;
+        gC = rc.xy; gR = min(rc.z, rc.w);
+        { vec2 bu = (rc.xy - uBackRect.xy) / uBackRect.zw;
+          gOn = uBackOn * step(0.0, bu.x) * step(bu.x, 1.0) * step(0.0, bu.y) * step(bu.y, 1.0); }
         float aa = 1.2 * uDpr;
         float d, sd;
         vec3 nn; vec2 q;
@@ -263,6 +281,13 @@ void main() {
         if (body > 0.0) col = kind == 0 ? pebble(look, q, nn, seed, hover, rel / uDpr, rc.zw / uDpr, uMore[i].w)
             : look == 19 ? mix(pearl(11, q, nn, seed, hover) * 0.95, pearl(10, q, nn, seed, hover) * 1.3, uMore[i].x)
             : pearl(look, q, nn, seed, hover);
+        // Lit by the picture behind, from each side by what's just off that edge: tinted by it
+        // (a little darker over a dark patch), and a soft rim of its colour, as backlit.
+        if (body > 0.0 && gOn > 0.0) {
+            vec3 round_ = backAt(gC + nn.xy * gR * 1.6);
+            col = mix(col, col * (0.7 + 1.5 * round_), 0.7 * gOn);
+            col += round_ * pow(1.0 - nn.z, 1.6) * 0.9 * gOn;
+        }
         // Shadow under, then the stone over it.
         vec4 s = vec4(0.0, 0.0, 0.0, shadow * (1.0 - body));
         vec4 b = vec4(col * body, body);
@@ -406,7 +431,7 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
       console.warn(gl.getShaderInfoLog(fs)); document.body.classList.add('no-gems'); canvas.remove(); return false;
     }
-    for (const n of ['uRes', 'uTime', 'uDpr', 'uCount', 'uRect', 'uKind', 'uMore']) U[n] = gl.getUniformLocation(prog, n);
+    for (const n of ['uRes', 'uTime', 'uDpr', 'uCount', 'uRect', 'uKind', 'uMore', 'uBack', 'uBackRect', 'uBackOn']) U[n] = gl.getUniformLocation(prog, n);
     document.body.classList.add('gems');
     return (ready = true);
   }
@@ -414,6 +439,24 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
   gl.bindBuffer(gl.ARRAY_BUFFER, buf);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
 
+  // The live hero's picture (js/live.js), into a small texture whenever there's a new one.
+  const backTex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, backTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
+  for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+  const liveCanvas = document.getElementById('live');
+  let haveBack = false, backOn = 0;
+  const NO_LIGHT = new URLSearchParams(location.search).has('nolight');   // (?nolight: without, to compare)
+  // (js/live.js calls this just after it draws, while its canvas still has the picture: copied
+  // GPU to GPU here, and mipmapped for backAt's blur. null: none now.)
+  window.UIGemsBackdrop = src => {
+    if (!src || gl.isContextLost()) { haveBack = false; return; }
+    gl.bindTexture(gl.TEXTURE_2D, backTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    haveBack = true;
+  };
   const hover = new WeakMap();
   const rects = new Float32Array(MAX * 4), kinds = new Float32Array(MAX * 4), more = new Float32Array(MAX * 4);
   let els = [];
@@ -475,6 +518,15 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
     gl.uniform4fv(U.uRect, rects);
     gl.uniform4fv(U.uKind, kinds);
     gl.uniform4fv(U.uMore, more);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, backTex);
+    // (eased, and off while the hero shows its poster instead)
+    const showing = haveBack && !NO_LIGHT && !document.body.classList.contains('waiting') && !document.body.classList.contains('no-live');
+    backOn += ((showing ? 1 : 0) - backOn) * (1 - Math.exp(-dt * 3));
+    const lr = liveCanvas ? liveCanvas.getBoundingClientRect() : null;
+    gl.uniform1i(U.uBack, 0);
+    gl.uniform1f(U.uBackOn, lr && lr.width ? backOn : 0);
+    if (lr) gl.uniform4f(U.uBackRect, (lr.left - cr.left) * dpr, (lr.top - cr.top) * dpr, Math.max(1, lr.width * dpr), Math.max(1, lr.height * dpr));
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);

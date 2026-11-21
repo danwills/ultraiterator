@@ -1111,12 +1111,26 @@ void main() {
 
   // Too slow even at its lowest: show the fractal's own render, sharp, instead.
   function giveUp() {
-    cur = null;
+    cur = null; if (window.UIGemsBackdrop) window.UIGemsBackdrop(null);
     document.body.classList.add('no-live');
     if (poster) poster.classList.remove('gone');
     const note = document.querySelector('.live-note');
     if (note && order[at]) note.innerHTML = 'One of the fractals, as rendered in Ultra Fractal. (This browser is a bit slow to draw it live.)<br><span id="live-name"></span>';
     if (order[at]) { const n = document.getElementById('live-name'); if (n) n.textContent = order[at].name.replace(/_dotdotdot_/g, ' … ').replace(/_/g, ' '); }
+  }
+
+  // The picture, for js/pearls.js: the gems over it are lit by it and reflect it (Dan: "hang the
+  // expense, although doing it as cheaply as possible would be sweet"). Handed over every BACK_MS
+  // just after it's drawn (its drawing buffer is only good till the page composites), copied on
+  // the GPU there. (Read back through a buffer instead, Chrome took its slow path every time:
+  // 3 ms a read, 130 ms at the 95th percentile, waiting on the queued refinement.)
+  const BACK_MS = 100;
+  let backAt = 0;
+  function shareBackdrop() {
+    const now = performance.now();
+    if (now - backAt < BACK_MS || !window.UIGemsBackdrop) return;
+    backAt = now;
+    window.UIGemsBackdrop(canvas);
   }
 
   function present() {
@@ -1149,6 +1163,7 @@ void main() {
     gl.uniform2f(SU.uHistRot, Math.cos(hv.a), Math.sin(hv.a));
     gl.uniform1i(SU.uSmooth, refTurns ? 1 : 0);
     quadDraw(w, h);
+    shareBackdrop();
   }
 
   // The pause pearl says which it's doing: dim, near the ↻ pearl's black, while it moves (drawing
@@ -1234,7 +1249,7 @@ void main() {
   const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
   // Black till the next one begins (begin sets cur again): the canvas cleared, its poster hidden.
   function blackOut() {
-    cur = null;
+    cur = null; if (window.UIGemsBackdrop) window.UIGemsBackdrop(null);
     if (poster) poster.classList.add('gone');
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, canvas.width, canvas.height);
