@@ -15,11 +15,33 @@
     if (window.UILive) UILive.show(id);
   }
   function leave() {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    viaFull = false;
+    if (!document.fullscreenElement) document.body.classList.remove('fullscreen');
     document.body.classList.remove('theatre', 'bare');
     window.scrollTo(0, scrollBefore);
   }
 
+  // The fullscreen pearl: the fractal it's on, filling the tab (as a gallery pick does, carrying
+  // on where it is) and the screen, where the browser can (not iPhones: the tab only, there).
+  // Leaving fullscreen (the pearl, or Esc, which the browser keeps for itself) goes back to the
+  // page, if the pearl brought it here.
+  let viaFull = false;
+  document.addEventListener('fullscreenchange', () => {
+    const on = !!document.fullscreenElement;
+    document.body.classList.toggle('fullscreen', on);
+    if (!on && viaFull && document.body.classList.contains('theatre')) { viaFull = false; history.back(); }
+  });
   window.UITheatre = {
+    toggleFull() {
+      if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; }
+      if (viaFull && document.body.classList.contains('theatre')) { viaFull = false; history.back(); return; }   // (no Fullscreen API: the tab's view only)
+      const id = window.UILive && UILive.current();
+      if (!document.body.classList.contains('theatre') && id) { UITheatre.open(id); viaFull = true; }
+      const el = document.documentElement;
+      if (el.requestFullscreen) el.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
+      if (!el.requestFullscreen) document.body.classList.toggle('fullscreen', viaFull);
+    },
     open(id) {
       history.pushState({ ui: 'theatre', id }, '', '#live-' + id);
       enter(id);

@@ -13,7 +13,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:ital,wght@0,300..700;1,300..700&display=swap">
-<link rel="stylesheet" href="home.css?v=e55f3c47">
+<link rel="stylesheet" href="home.css?v=23953db7">
 </head>
 <body>
 
@@ -35,6 +35,8 @@
       <g transform="matrix(7.8 -4.5 0 9 12 12)"><circle r=".11" cx=".25" cy=".25"/><circle r=".11" cx=".5" cy=".5"/><circle r=".11" cx=".75" cy=".75"/></g></g></svg></button>
     <button id="iters-pearl" class="gem" data-gem="pearl" data-look="amethyst" data-seed="2.3" title="Iterations: 100% (click for fewer, Shift or right click for more, double-click halves, long-press for full)" aria-label="Iterations"><span class="glyph iters">100%</span></button>
     <button id="pause-pearl" class="gem" data-gem="pearl" data-look="state" data-seed="5.7" onclick="window.UILive && UILive.togglePause()" title="Pause the dive" aria-label="Pause"><span class="glyph bars"></span></button>
+    <button id="full-pearl" class="gem" data-gem="pearl" data-look="moonstone" data-seed="4.4" onclick="UITheatre.toggleFull()" title="Fullscreen (Esc to leave)" aria-label="Fullscreen"><svg class="glyph full" viewBox="0 0 24 24" aria-hidden="true">
+      <path class="out" d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/><path class="in" d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"/></svg></button>
     <button class="gem theatre-only" data-gem="pebble" data-look="basalt" data-seed="5.1" onclick="UITheatre.bare()" title="Just the fractal (Esc, Enter or a tap brings these back)" aria-label="Hide the controls"><span class="glyph">✕</span></button>
     <span id="live-say" class="live-say" aria-live="polite"></span>
   </div>
@@ -114,9 +116,9 @@
 </footer>
 
 <script src="js/gallery.js?v=c2c70caf"></script>
-<script src="js/live.js?v=f5917a75"></script>
+<script src="js/live.js?v=7c1fb648"></script>
 <script src="js/pearls.js?v=c9218050"></script>
-<script src="js/theatre.js?v=f6d8bb72"></script>
+<script src="js/theatre.js?v=6b844a13"></script>
 <script>
 // The Open pebble only on Android (an intent: link, falling back to here if it isn't installed).
 if (/Android/i.test(navigator.userAgent)) document.body.classList.add('android');

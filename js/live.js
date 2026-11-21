@@ -1469,6 +1469,7 @@ void main() {
       }
     },
     // Play: off at once (no wait after a touch), up to speed in a second or so.
+    current: () => (cur ? cur.pick.id : order[at] ? order[at].id : null),   // (the fullscreen pearl's: js/theatre.js)
     capSource,   // (for tests)
     // (For tests: the view put there, paused. h in picture heights, or in floors with floors: n.)
     place(v) { if (v.floors) v = { ...v, h: minH * v.floors }; Object.assign(view, v); paused = true; restHolding = false; restWaiting = false; frames = 0; still = 0; prevView = null; stopRefine(); refMix = 0; return { ...view, minH }; },
