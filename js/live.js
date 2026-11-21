@@ -1085,7 +1085,8 @@ void main() {
   }, { passive: false });
 
   // Touch, by touch events (the canvas is touch-action: pan-y): two fingers pinch and move it;
-  // one finger moving sideways first moves it, and moving up or down first scrolls the page.
+  // one finger moving sideways first moves it, and moving up or down first scrolls the page
+  // (in the full-tab view, any way moves it).
   let tmode = null, t0 = null, pinchD = 0, pinchM = null;
   const mid = ts => ({ x: (ts[0].clientX + ts[1].clientX) / 2, y: (ts[0].clientY + ts[1].clientY) / 2 });
   const dist = ts => Math.hypot(ts[0].clientX - ts[1].clientX, ts[0].clientY - ts[1].clientY);
@@ -1112,7 +1113,7 @@ void main() {
     const dx = t.clientX - t0.x, dy = t.clientY - t0.y;
     if (!tmode) {
       if (Math.hypot(dx, dy) < 6) return;
-      tmode = Math.abs(dx) > Math.abs(dy) ? 'pan' : 'scroll';
+      tmode = document.body.classList.contains('theatre') || Math.abs(dx) > Math.abs(dy) ? 'pan' : 'scroll';   // (full-tab: no page to scroll)
       if (tmode === 'scroll') return;
     }
     if (e.cancelable) e.preventDefault();
