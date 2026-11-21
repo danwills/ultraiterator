@@ -226,12 +226,13 @@ void main() {
   const IDLE_RESUME = 9;       // seconds after a touch before it steers itself again
   // Rests: the dive eases to a stop now and then (after REST_EVERY s of moving) and holds still for
   // REST_HOLD s, so the refinement gets to show; the pause pearl counts it down as after a touch.
-  const REST_EVERY = [15, 30], REST_HOLD = 22, REST_SETTLE = 3, REST_RESUME = 3;
+  const REST_EVERY = [15, 30], REST_HOLD = 11, REST_SETTLE = 3, REST_RESUME = 3;
   // ...or, where it refines, for as long as the picture's still settling (Dan): about once a second
   // the middle of the refinement is read back, and once it changes by under REST_STILL (of 255)
   // a second it holds REST_AFTER s more. Never under REST_MIN s or over REST_MAX; and it ends
   // early rather than turn past what it refined (REST_TURN_FOR s of turn's worth, see startRefine).
-  const REST_MIN = 8, REST_MAX = 40, REST_AFTER = 5, REST_STILL = 1, REST_TURN_FOR = 25;
+  // (Dan: rested too long; all halved, 2026-11-21: they were 8, 40, 5, 25, with REST_HOLD 22.)
+  const REST_MIN = 4, REST_MAX = 20, REST_AFTER = 2.5, REST_STILL = 1, REST_TURN_FOR = 12.5;
   const SETTLE_PX = 48;
   let restWhy = '', restRate = 0, restWaiting = false, restAt = 0, settleRead = null, settleReadAt = 0, settleReadN = 0, settleReads = 0, refAng = 0;
   const settlePx = new Float32Array(SETTLE_PX * SETTLE_PX * 4);
@@ -243,7 +244,7 @@ void main() {
   // a high-res"): it refines at the screen's full resolution whatever the refinement had stepped
   // down to (watchFps), doesn't turn (so needs no margin and never runs out of it), and holds till
   // END_MIN_N samples a pixel and settled, or END_MAX s.
-  const END_MIN_N = 64, END_MAX = 60;
+  const END_MIN_N = 32, END_MAX = 30;   // (halved with the rests: they were 64, 60)
   const REST_LEAD = 5;         // seconds of moving the pause pearl shows a rest coming (and then its settling)
   // A word under the pause pearl as a rest begins and ends.
   const sayEl = document.getElementById('live-say'), SAY_FOR = 3.5;
