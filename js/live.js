@@ -248,7 +248,7 @@ void main() {
   // by hand it went straight into a rest: the time since the last rest had kept counting).
   const REST_MOVE_FIRST = 4;
   const SETTLE_PX = 48;
-  let restWhy = '', restRate = 0, restWaiting = false, restAt = 0, settleRead = null, settleReadAt = 0, settleReadN = 0, settleReads = 0, refAng = 0;
+  let restWhy = '', restRate = 0, restWaiting = false, restAt = 0, settleRead = null, settleReadAt = 0, settleReadN = 0, settleReads = 0, refAng = 0, refAngGo = 0;
   const settlePx = new Float32Array(SETTLE_PX * SETTLE_PX * 4);
   // The end of its depth always gets a rest (Dan: "heaps of zooms seem to end and go to the next
   // fractal instead of rendering a nice deep-zoom"): it settles there, at END_REST_AT x its least
@@ -323,7 +323,20 @@ void main() {
   const REF_OUT = 0.5;         // seconds to fade back out once the view moves
   // Without float blending: a plain running average in the moving view's blend instead, this long.
   const STILL_FRAMES = 128;
-  const PRECISION_MARGIN = 2;  // stop this many times short of where fp32 runs out
+  // How deep: no further than where a screen pixel spans PRECISION_ULPS of fp32's steps in c, at
+  // the worst place the view can be. (Was 2, from the 2k's middle only: precision blocks crept in at
+  // the end of some dives, Dan.) Each layer maps the view's o to c = C + R o, both in fp32 on the
+  // GPU, so its step is c's own (ulp at |c|, which grows away from the middle) plus o's, by |R|.
+  const PRECISION_ULPS = 8;
+  const ulp32 = x => 2 ** (Math.floor(Math.log2(Math.max(Math.abs(x), 1e-30))) - 23);
+  const mapsOf = src => [...src.matchAll(/const vec2 C\d+ = vec2\(([^,]+), ([^)]+)\), R\d+ = vec2\(([^,]+), ([^)]+)\)/g)]
+    .map(m => ({ cx: +m[1], cy: +m[2], r: Math.hypot(+m[3], +m[4]) }));
+  // The least height for a view reaching rho (picture heights) from the 2k's middle.
+  function floorH(maps, rho, screenPx) {
+    let need = 0;
+    for (const m of maps) if (m.r > 0) need = Math.max(need, ulp32(Math.max(Math.abs(m.cx), Math.abs(m.cy)) + m.r * rho) / m.r + ulp32(rho));
+    return need * PRECISION_ULPS * screenPx;
+  }
   const TAA = new URLSearchParams(location.search).get('taa') !== '0';   // ?taa=0: no blending, to compare
   const PIN_STEP = new URLSearchParams(location.search).has('step') ? +new URLSearchParams(location.search).get('step') : null;   // ?step=n: hold the ladder there, to compare
   // Render scale (CSS px a pixel, up to the screen's own) and samples a side, cheapest first.
@@ -351,7 +364,7 @@ void main() {
   let at = 0;              // place in `order`
   let view = { x: 0, y: 0, h: 1, a: 0 }, prevView = null;   // (a: its turn, radians anticlockwise)
   let target = { x: 0, y: 0 }, aim = { x: 0, y: 0 }, vel = { x: 0, y: 0 };
-  let startH = 1, minH = 1e-3, lastLook = 0, steerT = 0, easeFor = 4;   // (easeFor: s to reach full speed)
+  let startH = 1, minH = 1e-3, floorPx = 1, picRho = 1, lastLook = 0, steerT = 0, easeFor = 4;   // (easeFor: s to reach full speed)
   // Held still till holdUntil (a touch, or a rest), holdLen s in all; moving for movedT s since the
   // last rest, the next after nextRest; settleAt: when a rest began easing to a stop (or null).
   let holdUntil = -1e9, holdLen = IDLE_RESUME, movedT = 0, nextRest = restIn(), settleAt = null;
@@ -478,7 +491,7 @@ void main() {
         const src = capSource(await (await fetch('live/' + pick.id + '.glsl')).text());
         if (SLOW) await new Promise(r => setTimeout(r, SLOW));   // (?slow=ms: a slow compile, to test the wait)
         const [prog, tex] = await Promise.all([program(HEAD + common + src + MAIN), gradient(pick.id)]);
-        return { pick, prog, tex, uni: uniforms(prog, ['uGrad', 'uAA', 'uView', 'uRes', 'uJitter', 'uRot', 'uLake', 'uIterCap']) };
+        return { pick, prog, tex, maps: mapsOf(src), uni: uniforms(prog, ['uGrad', 'uAA', 'uView', 'uRes', 'uJitter', 'uRot', 'uLake', 'uIterCap']) };
       })());
     }
     return loaded.get(pick.id);
@@ -554,7 +567,10 @@ void main() {
     // picture's height. Taken at the screen's own pixels (not the render's, which can be coarser
     // for a while), with a margin, since the sub-pixel samples go finer still.
     const screenPx = canvas.getBoundingClientRect().height * Math.min(window.devicePixelRatio || 1, 2);
-    minH = Math.max(startH / 4096, screenPx * PRECISION_MARGIN / (2048 * pick.depth));
+    // (The view stays near the picture, so its half-diagonal and a little more; look() raises it if
+    // the view wanders further.)
+    floorPx = screenPx; picRho = 0.6 * Math.hypot(pick.aspect || 1, 1);
+    minH = Math.max(startH / 4096, floorH(next.maps, picRho, screenPx));
     view = { x: 0, y: 0, h: startH, a: 0 };
     target = { x: 0, y: 0 }; aim = { x: 0, y: 0 }; vel = { x: 0, y: 0 };
     lastLook = performance.now() / 1000 - RETARGET + 1.0; steerT = 0; easeFor = 4; turnSteer = 0;
@@ -594,6 +610,8 @@ void main() {
   // flat region, or a lone line in a blank space (Dan), and only saw this depth, so the best few
   // (and straight on) are each looked at deeper (lookAhead) before it picks.
   function look() {
+    const rho = Math.hypot(view.x, view.y) + view.h;
+    if (rho > picRho) { picRho = rho; minH = Math.max(minH, floorH(cur.maps, rho, floorPx)); }   // (wandered off the picture: c's step may be coarser there)
     gl.bindFramebuffer(gl.FRAMEBUFFER, probe.fb);
     drawFractal(PROBE, PROBE, view, 1, 0, 0, true);
     gl.readPixels(0, 0, PROBE, PROBE, gl.RGBA, gl.UNSIGNED_BYTE, probePx);
@@ -936,15 +954,24 @@ void main() {
     let w = Math.max(16, Math.round(r.width * s)), h = Math.max(16, Math.round(r.height * s));
     // In a rest the view keeps turning, so it refines a little more all round: enough for the turn
     // the rest of the hold will make (worked out ahead, the noise being known), and the screen just
-    // reads it turned. ~14° at the most, about half as many pixels again for a wide screen.
-    let ang = 0;
+    // reads it turned. ~14° at the most, about half as many pixels again for a wide screen. It
+    // covers the furthest the turn gets on the way (it can swing back), through the REST_AFTER
+    // seconds it turns on after the refinement's done (past it, the edges streaked: Dan); refAngGo,
+    // the turn the refinement's done at.
+    let ang = 0, go = 0;
     if (restHolding && !paused && !endRest) {
-      const now = performance.now() / 1000, ease = turnEase();
-      const T = (restWaiting ? Math.max(0, restAt + REST_TURN_FOR - now) : Math.max(0, holdUntil - now)) + 0.5;
-      for (let t = 0; t < T; t += 0.1) ang += turnRate(turnT + t, ease) * REST_TURN_MUL * 0.1;
-      ang = Math.min(0.5, Math.abs(ang) * 1.15 + 0.002);
+      const now = performance.now() / 1000;
+      const Tgo = restWaiting ? Math.max(0, restAt + REST_TURN_FOR - now) : Math.max(0, holdUntil - now);
+      const T = Tgo + (restWaiting ? REST_AFTER : 0) + 0.5;
+      let a = 0;
+      for (let t = 0; t < T; t += 0.1) {
+        a += turnRate(turnT + t, smooth(0, 4, turnSteer + t) * (0.25 + 0.75 * smooth(minH, minH * 6, view.h))) * REST_TURN_MUL * 0.1;
+        ang = Math.max(ang, Math.abs(a));
+        if (t < Tgo) go = ang;
+      }
+      ang = Math.min(0.5, ang * 1.15 + 0.004); go = Math.min(go * 1.15 + 0.002, ang * 0.75);
     }
-    refTurns = ang > 0; refAng = ang;
+    refTurns = ang > 0; refAng = ang; refAngGo = go;
     const c = Math.cos(ang), sn = Math.sin(ang), h0 = h;
     [w, h] = [Math.ceil(w * c + h * sn), Math.ceil(w * sn + h * c)];
     if (!acc || acc.w !== w || acc.h !== h) { if (acc) acc.free(); acc = target2d(w, h, gl.RGBA32F); }
@@ -1134,7 +1161,14 @@ void main() {
   let turnMul = 1;
   function turn(dt) {
     turnMul += ((restHolding && !endRest ? REST_TURN_MUL : 1) - turnMul) * (1 - Math.exp(-dt));
-    turnT += dt; turnSteer += dt; view.a += turnRate(turnT, turnEase()) * turnMul * dt;
+    turnT += dt; turnSteer += dt;
+    let da = turnRate(turnT, turnEase()) * turnMul * dt;
+    // Never past what the rest's refinement covers: it eases to a stop at its edge, if it ever gets there.
+    if (refining && refTurns) {
+      const off = view.a - refView.a;
+      if (da * off > 0) da *= smooth(0, 0.03, refAng - 0.005 - Math.abs(off));
+    }
+    view.a += da;
   }
   const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
   // Black till the next one begins (begin sets cur again): the canvas cleared, its poster hidden.
@@ -1175,7 +1209,8 @@ void main() {
         }
       }
       const ease = smooth(0, easeFor, steerT) * (0.25 + 0.75 * smooth(minH, minH * 6, view.h)) * restEase;
-      view.h = Math.max(minH, view.h * Math.pow(2, -ZOOM_RATE * ease * dt));
+      view.h = view.h < minH ? Math.min(minH, view.h * Math.pow(2, ZOOM_RATE * dt))   // (back out, if look() raised the floor)
+        : Math.max(minH, view.h * Math.pow(2, -ZOOM_RATE * ease * dt));
       if (now - lastLook > RETARGET) { lastLook = now; look(); }
       // The aim glides to the target, and a critically damped spring follows the aim, so the
       // drift's speed and direction both change smoothly (no kinks when the target moves).
@@ -1219,8 +1254,8 @@ void main() {
   // A rest's refinement settling (REST_STILL): when it has, or has turned as far as it refined, the
   // rest's end is set, and the pause pearl's ring (full till then) runs down to it.
   function watchSettle(now) {
-    let done = refN >= REF_MAX || refTurns && Math.abs(view.a - refView.a) > refAng - 0.01;
-    if (done) restWhy = refN >= REF_MAX ? 'max samples' : 'turned ' + Math.abs(view.a - refView.a).toFixed(3) + ' of ' + refAng.toFixed(3);
+    let done = refN >= REF_MAX || refTurns && Math.abs(view.a - refView.a) > refAngGo;
+    if (done) restWhy = refN >= REF_MAX ? 'max samples' : 'turned ' + Math.abs(view.a - refView.a).toFixed(3) + ' of ' + refAngGo.toFixed(3);
     if (!done && refN >= (endRest ? END_MIN_N : REST_SAMPLES)) { done = true; restWhy = refN + ' samples'; }
     if (!done && now - settleReadAt >= 1 && refN > 0) {
       const x = Math.max(0, (acc.w - SETTLE_PX) >> 1), y = Math.max(0, (acc.h - SETTLE_PX) >> 1);
@@ -1346,6 +1381,8 @@ void main() {
     },
     // Play: off at once (no wait after a touch), up to speed in a second or so.
     capSource,   // (for tests)
+    // (For tests: the view put there, paused. h in picture heights, or in floors with floors: n.)
+    place(v) { if (v.floors) v = { ...v, h: minH * v.floors }; Object.assign(view, v); paused = true; restHolding = false; restWaiting = false; frames = 0; still = 0; prevView = null; stopRefine(); refMix = 0; return { ...view, minH }; },
     // The iterations pearl: down a step (up, with Shift or a right click), round again past the
     // ends; 'half' halves it (to ITER_MIN at the least), 'full' puts it back. (From a halving, off
     // the steps, a step goes to the next one along.)
@@ -1363,7 +1400,7 @@ void main() {
       return iterCap;
     },
     togglePause() { paused = !paused; if (paused) loadNext(); restHolding = false; restWaiting = false; endRest = false; if (ended) { ended = false; leaving = false; fadeDir = 1; } if (!paused) { steerT = 0; easeFor = 1.2; holdUntil = -1e9; settleAt = null; movedT = 0; } return paused; },
-    state: () => ({ iterCap, heavyCost, gpuRate, fitting: order.filter(fits).length, of: order.length, endRest, ended, restWhy, restRate, rest: restHolding ? (restWaiting ? 'settling' : 'ending') : '', restFor: restHolding ? +(performance.now() / 1000 - restAt).toFixed(1) : 0, fade, leaving, step, scale: steps()[step][0], still, refining, refN, refMix, bands, bandMs, frameInt, refDuty, refScale: refScaleNow(), acc: acc && acc.w + 'x' + acc.h, frames, h: view.h, a: view.a, minH }),
+    state: () => ({ iterCap, heavyCost, gpuRate, fitting: order.filter(fits).length, of: order.length, endRest, ended, restWhy, restRate, rest: restHolding ? (restWaiting ? 'settling' : 'ending') : '', restFor: restHolding ? +(performance.now() / 1000 - restAt).toFixed(1) : 0, fade, leaving, step, scale: steps()[step][0], still, refining, refN, refMix, bands, bandMs, frameInt, refDuty, refScale: refScaleNow(), acc: acc && acc.w + "x" + acc.h, frames, h: view.h, a: view.a, minH, refAng, refAngGo, refA: refView ? refView.a : null, picRho }),
   };
 
   // The GPU lost (a draw that ran too long gets the GPU reset, Chrome showing a white canvas with a
