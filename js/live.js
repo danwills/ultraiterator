@@ -253,7 +253,7 @@ void main() {
   // by hand it went straight into a rest: the time since the last rest had kept counting).
   const REST_MOVE_FIRST = 4;
   const SETTLE_PX = 48;
-  let restWhy = '', restRate = 0, restWaiting = false, restAt = 0, settleRead = null, settleReadAt = 0, settleReadN = 0, settleReads = 0, refAng = 0, refAngGo = 0;
+  let restWhy = '', restRate = 0, restWaiting = false, restAt = 0, settleRead = null, settleReadAt = 0, settleReadN = 0, settleReads = 0, rateKnown = false, refAng = 0, refAngGo = 0;
   const settlePx = new Float32Array(SETTLE_PX * SETTLE_PX * 4);
   // The end of its depth always gets a rest (Dan: "heaps of zooms seem to end and go to the next
   // fractal instead of rendering a nice deep-zoom"): it settles there, at END_REST_AT x its least
@@ -377,7 +377,9 @@ void main() {
   let frames = 0, jitterI = 0, still = 0;
   const READY_FRAMES = 8;   // frames blended before it fades in
   let refining = false, refN = 0, refMix = 0, refView = null, acc = null, refTurns = false;
-  let refSync = null, refSubmit = 0, refRest = 0, band = 0, bands = 1;
+  let refSync = null, refSyncA = null, refBegan = 0, refSubmit = 0, refRest = 0, band = 0, bands = 1;
+  // (Never more bands than half its rows: past that they're empty draws, each still waited on.)
+  const maxBands = () => 2 ** Math.floor(Math.log2(Math.max(1, Math.min(1024, (acc ? acc.h : 2) >> 1))));
 
   const quad = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, quad);
@@ -563,7 +565,7 @@ void main() {
     starting = false;
     clearTimeout(waitT);
     if (queued !== null) { const q = queued; queued = null; begin(q); return; }
-    cur = next; beganAt = performance.now() / 1000;
+    cur = next; beganAt = performance.now() / 1000; refCap = 1e9;
     if (PIN_STEP === null) { step = startStep(pick); ceiling = 99; frameTimes = []; }
     showName(pick);
     // The whole 2k to start with, then in until fp32 runs out (its depth past the 2k).
@@ -900,7 +902,22 @@ void main() {
   // browser, showed as much as a desktop's did.)
   const refScaleMax = () => HI_OK ? Math.min(window.devicePixelRatio || 1, 2) : Math.max(steps()[step][0], Math.min(window.devicePixelRatio || 1, 1));
   const endHeld = () => endRest && (restHolding || ended);
-  const refScaleNow = () => endHeld() ? refScaleMax() : Math.max(steps()[step][0], Math.min(refScaleMax(), refScale || 1e9));
+  // A heavy fractal's refinement at the screen's scale took seconds a pass (measured: 8.5 s for
+  // its first sample, the rests ending with 0 or 1, all spent on the blurry moving view): if the
+  // first pass is on course for much over REF_PASS_S, this fractal's refining is at the scale that
+  // takes about that (refCap, till the next fractal; still sharper than the moving view's).
+  const REF_PASS_S = 0.75;
+  let refCap = 1e9;
+  const refScaleNow = () => Math.max(steps()[step][0], Math.min(endHeld() ? refScaleMax() : Math.min(refScaleMax(), refScale || 1e9), refCap));
+  function capRefine(now) {
+    if (!refining || refN > 0 || band === 0 || now - refStartT < 1) return;
+    const pass = (now - refStartT) * bands / band;   // (bands can double mid-pass; band with it)
+    if (pass < REF_PASS_S * 1.5) return;
+    const s = refScaleNow(), to = Math.max(steps()[step][0], s * Math.sqrt(REF_PASS_S / pass));
+    if (to > s * 0.95) return;
+    refCap = to;
+    stopRefine(); startRefine();
+  }
   let baseFrame = 1 / 60;   // the page's frame time while moving, refinement's yardstick
   let refComfort = 0, refUpAt = 0, refUpWait = REF_UP_WAIT, refWentUp = false;
   // The page's frame rate while refining, each second: too slow, less of the GPU, then a lower
@@ -1000,6 +1017,7 @@ void main() {
     if (!acc || acc.w !== w || acc.h !== h) { if (acc) acc.free(); acc = target2d(w, h, gl.RGBA32F); }
     gl.bindFramebuffer(gl.FRAMEBUFFER, acc.fb);
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+    settleRead = null; settleReads = 0; rateKnown = false;
     refN = 0; refView = { ...view, h: view.h * h / hs }; refining = true; refStartT = performance.now() / 1000; band = 0; refRest = 0; bandMs = 0;
     // The first pass in bands already, sized from the moving view's frames scaled by the pixels:
     // as one band, a heavy fractal's first sample at a phone's whole CSS-pixel size held its GPU
@@ -1007,13 +1025,14 @@ void main() {
     // scroll (Dan). It's an overestimate (a frame's more than its fractal), and the bands are
     // halved from there once they're measured.
     const guess = sampled ? baseFrame * 1000 * (w * h) / (sampled.w * sampled.h) : 0;
-    bands = Math.min(1024, 2 ** Math.ceil(Math.log2(Math.max(1, guess / REF_BAND_MAX_MS))));
+    bands = Math.min(maxBands(), 2 ** Math.ceil(Math.log2(Math.max(1, guess / REF_BAND_MAX_MS))));
     refFps = []; refFpsAt = performance.now() / 1000;
   }
   function stopRefine() {
     refining = false;
     if (refSync) { gl.deleteSync(refSync); refSync = null; }
-    for (const q of refQueue) gl.deleteQuery(q);
+    if (refSyncA) { gl.deleteSync(refSyncA); refSyncA = null; }
+    for (const { q } of refQueue) gl.deleteQuery(q);
     refQueue = [];
   }
   // Refinement's share of the GPU (REF_DUTY). With the GPU's own timer (desktop browsers mostly
@@ -1030,27 +1049,40 @@ void main() {
     const budget = refDuty * frameInt * 1000;   // ms of GPU a frame
     let done = false;
     if (timer) {
-      while (refQueue.length && gl.getQueryParameter(refQueue[0], gl.QUERY_RESULT_AVAILABLE)) {
-        const q = refQueue.shift();
-        const ms = gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6;
+      while (refQueue.length && gl.getQueryParameter(refQueue[0].q, gl.QUERY_RESULT_AVAILABLE)) {
+        const { q, n } = refQueue.shift();
+        const ms = gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6 / n;
         if (!gl.getParameter(timer.GPU_DISJOINT_EXT)) bandMs = bandMs ? bandMs * 0.7 + ms * 0.3 : ms;
         gl.deleteQuery(q); done = true;
       }
     } else if (refSync) {
+      // Its own time: from a fence just before it (the frames queued ahead of it on the GPU done)
+      // to the one after, each seen at the frame it's found done. Timed from its submission
+      // instead, it counted those frames too (~200 ms on Dan's phone), and its bands doubled up
+      // to 1024, mostly empty, each waited on, with a rest after each: minutes to a sample.
+      let same = false;
+      if (refSyncA && gl.clientWaitSync(refSyncA, 0, 0) !== gl.TIMEOUT_EXPIRED) { gl.deleteSync(refSyncA); refSyncA = null; refBegan = now; same = true; }
       if (gl.clientWaitSync(refSync, 0, 0) === gl.TIMEOUT_EXPIRED) return false;
       gl.deleteSync(refSync); refSync = null; done = true;
-      const busy = now - refSubmit;
+      if (refSyncA) { gl.deleteSync(refSyncA); refSyncA = null; refBegan = now; same = true; }
+      const busy = same ? 0.5 * frameInt : now - refBegan;   // (both done between two frames: under one)
       bandMs = busy * 1000;
       // A band that held the GPU for frames: the rest of this pass in halves at once, not from
       // the next pass (a heavy view's whole first pass, each band seconds long, risked the GPU's
       // reset). (band is the next one's: in twice as many, it's at 2 band.)
-      if (busy > 2.5 * frameInt && bands < 1024) { band *= 2; bands *= 2; }
+      if (busy > 2.5 * frameInt && bands < maxBands()) { band *= 2; bands *= 2; }
       refRest = now + busy * (1 / refDuty - 1);
     }
     if (refQueue.length || refSync || refN >= REF_MAX || now < refRest) return done;
-    let spent = 0;
-    do { sendBand(budget); spent += bandMs || budget; }
+    // (A frame's bands timed together: the timer reads ~2 ms over for each query, measured against
+    // whole passes read back, so timing each band alone had it fitting one or two a frame, a
+    // fifth of its share; and more bands then looked like more work, so it cut them finer still.)
+    let spent = 0, n = 0;
+    const q = timer ? gl.createQuery() : null;
+    if (q) gl.beginQuery(timer.TIME_ELAPSED_EXT, q);
+    do { sendBand(budget); spent += bandMs || budget; n++; }
     while (timer && refN < REF_MAX && spent + (bandMs || budget) <= budget);
+    if (q) { gl.endQuery(timer.TIME_ELAPSED_EXT); refQueue.push({ q, n }); gl.flush(); }
     // Over its share (a band bigger than a frame's): rest until the average is back to it.
     if (timer && spent > budget) refRest = now + spent / 1000 / refDuty - frameInt;
     return done;
@@ -1059,13 +1091,11 @@ void main() {
     const n = refN + 1;
     const rad = REF_SIGMA * Math.sqrt(-2 * Math.log(halton(n, 2))), th = 2 * Math.PI * halton(n, 3);
     const y0 = Math.floor(acc.h * band / bands), y1 = Math.floor(acc.h * (band + 1) / bands);
+    if (!timer) refSyncA = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
     gl.bindFramebuffer(gl.FRAMEBUFFER, acc.fb);
     gl.enable(gl.SCISSOR_TEST); gl.scissor(0, y0, acc.w, y1 - y0);
     gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
-    let q = null;
-    if (timer) { q = gl.createQuery(); gl.beginQuery(timer.TIME_ELAPSED_EXT, q); }
     drawFractal(acc.w, acc.h, refView, 1, rad * Math.cos(th), rad * Math.sin(th));
-    if (q) { gl.endQuery(timer.TIME_ELAPSED_EXT); refQueue.push(q); gl.flush(); }
     gl.disable(gl.BLEND); gl.disable(gl.SCISSOR_TEST);
     if (!timer) { refSync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); gl.flush(); refSubmit = performance.now() / 1000; }
     if (++band < bands) return;
@@ -1074,8 +1104,8 @@ void main() {
     band = 0; refN++;
     if (!bandMs) return;
     const pass = bandMs * bands;
-    const want = timer ? Math.min(1024, 2 ** Math.ceil(Math.log2(Math.max(1, pass / Math.min(budget, REF_BAND_MAX_MS)))))
-      : bandMs > 2.5 * frameInt * 1000 ? Math.min(1024, bands * 2) : bandMs < 1.5 * frameInt * 1000 && bands > 1 ? bands / 2 : bands;
+    const want = timer ? Math.min(maxBands(), 2 ** Math.ceil(Math.log2(Math.max(1, pass / Math.min(budget, REF_BAND_MAX_MS)))))
+      : bandMs > 2.5 * frameInt * 1000 ? Math.min(maxBands(), bands * 2) : bandMs < 1.5 * frameInt * 1000 && bands > 1 ? bands / 2 : bands;
     if (want !== bands) { bandMs *= bands / want; bands = want; }
   }
 
@@ -1129,6 +1159,9 @@ void main() {
   // till the dive carries on (a tap on it pauses for good), and over the last CALL_LEAD s a warm
   // glow grows over it, the reminder, till it takes the pearl and the dive starts again.
   const GLOW_PLAY = 0.05, GLOW_FULL_AT = 1024, CALL_LEAD = 3, ORBIT_SPEED = 9, ORBIT_HALF = 2.7;   // (rad/s at first, a lap in 0.7 s; half that by ORBIT_HALF samples; by ~16, "pretty sharp", a crawl (a lap a minute), slower still after)
+  const ORBIT_RATE_FULL = 12;   // the moon at full speed while the picture changes this fast (of 255 a second)
+  const MOON_SHOW = 0.65;       // and dim, so the pearl's own brightening says the most
+  let moonFresh = 0;
   const pauseGlyph = pausePearl && pausePearl.querySelector('.glyph');
   let shownMode = '';
   function showState() {
@@ -1136,41 +1169,39 @@ void main() {
     const n = refining ? refN : !canRefine && still > 0 ? Math.min(still, STILL_FRAMES) * 2 : 0;
     const prog = Math.min(1, Math.log2(1 + n) / Math.log2(1 + GLOW_FULL_AT));
     pausePearl._glow = GLOW_PLAY + (1 - GLOW_PLAY) * prog;
-    // While it refines, a tiny moon circles the pearl: briskly over the first few dozen samples, where
-    // the picture visibly improves, then hardly moving through the long tail (js/pearls.js integrates its angle).
+    // While it refines, a tiny dim moon circles the pearl, as fast as the picture is still changing
+    // (restRate): brisk while it visibly sharpens, slowing to a stop as it settles, and hardly
+    // moving at all for a view that was sharp already. (Dan: a steady spin read as the page having
+    // to compute before it could zoom on; it's only polishing the view it's on.) Till the first
+    // reading (a second or two), slowly. Without refinement, by its still frames' averaging.
+    // (js/pearls.js integrates its angle.)
     const working = refining || (!canRefine && still > 0 && still < STILL_FRAMES);
-    const fresh = 1 / (1 + Math.pow(n / ORBIT_HALF, 2.5));
-    pausePearl._orbit = working ? { speed: ORBIT_SPEED * fresh, fresh, show: 1 - smooth(0.85, 1, prog) } : null;
+    const fresh = refining ? (rateKnown ? smooth(REST_STILL * 0.5, ORBIT_RATE_FULL, restRate) : 0.2) : 1 / (1 + Math.pow(n / ORBIT_HALF, 2.5));
+    moonFresh += (fresh - moonFresh) * 0.05;
+    pausePearl._orbit = working ? { speed: ORBIT_SPEED * moonFresh, fresh: moonFresh, show: MOON_SHOW * (1 - smooth(0.85, 1, prog)) } : null;
     const left = holdUntil - performance.now() / 1000;
     const half = !paused && left > 0;
     pausePearl._count = half ? (restWaiting ? 1 : left / holdLen) : -1;
     pausePearl._call = half ? smooth(CALL_LEAD, 0, left) : 0;
     // A rest on its way: the ring fills in over its last REST_LEAD s of moving and its settling, so
     // it's full as the rest begins and runs down from there (sent as -1 - fill).
-    let coming = 0;
     if (!paused && !half && !leaving && fade >= 1 && (view.h > minH * 8 || !endRest || settleAt !== null)) {
       // (The depth's end: the zoom's time to END_REST_AT, roughly, as it eases down towards it.)
       const easeAt = h => 0.25 + 0.75 * smooth(minH, minH * 6, h);
       const toEnd = endRest ? 1e9 : Math.log2(view.h / (minH * END_REST_AT)) / (ZOOM_RATE * 0.5 * (easeAt(view.h) + easeAt(minH * END_REST_AT)));
       const tLeft = settleAt === null ? Math.min(view.h > minH * 8 ? nextRest - movedT : 1e9, toEnd) + REST_SETTLE : REST_SETTLE - (performance.now() / 1000 - settleAt);
       const fill = 1 - tLeft / (REST_LEAD + REST_SETTLE);
-      if (fill > 0) { pausePearl._count = -1 - Math.min(1, fill); coming = fill; }
+      if (fill > 0) pausePearl._count = -1 - Math.min(1, fill);
     }
-    // ...and the moon comes out early, warm and drifting slowly, turning into the busy pale one
-    // as the refinement starts (sent as a negative call glow: js/pearls.js).
-    if (restHolding && !refining && !paused) coming = 1;
-    if (coming > 0 && !working) {
-      const w = smooth(0, 0.25, coming);
-      pausePearl._orbit = { speed: 0.9, fresh: 1, show: w };
-      pausePearl._call = -w;
-    }
-    const mode = paused ? 'paused' : half ? 'half' : 'playing';
+    // (No moon before the refinement starts: out early, it looked like the dive waiting on a computation.)
+    const mode = paused ? 'paused' : half ? (restHolding ? 'rest' : 'half') : 'playing';
     if (mode !== shownMode) {
       shownMode = mode;
       if (pauseGlyph) { pauseGlyph.textContent = mode === 'paused' ? '▶' : ''; pauseGlyph.classList.toggle('bars', mode === 'playing'); }   // (bars: home.css)
-      const label = mode === 'paused' ? 'Play' : mode === 'half' ? 'Keep it paused' : 'Pause';
+      const label = mode === 'paused' ? 'Play' : mode === 'half' || mode === 'rest' ? 'Keep it paused' : 'Pause';
       pausePearl.setAttribute('aria-label', label);
-      pausePearl.title = mode === 'paused' ? 'Carry on the dive' : mode === 'half' ? 'Keep it paused (it carries on by itself soon)' : 'Pause the dive';
+      pausePearl.title = mode === 'paused' ? 'Carry on the dive' : mode === 'rest' ? 'Sharpening this view (the dive carries on by itself; click to keep it paused)'
+        : mode === 'half' ? 'Keep it paused (it carries on by itself soon)' : 'Pause the dive';
     }
   }
 
@@ -1184,11 +1215,15 @@ void main() {
   // In a rest it turns REST_TURN_MUL x as fast, eased in and out over a second or so (Dan: the
   // turn didn't read while it refined).
   const REST_TURN_MUL = 2;
-  let turnMul = 1;
+  let turnMul = 1, turnHold = 1;
   function turn(dt) {
     turnMul += ((restHolding && !endRest ? REST_TURN_MUL : 1) - turnMul) * (1 - Math.exp(-dt));
     turnT += dt; turnSteer += dt;
-    let da = turnRate(turnT, turnEase()) * turnMul * dt;
+    // Till the refinement's first sample the turn waits (eased): the blend waits meanwhile, and
+    // turned on past it the edges streaked (Dan). (Drawing the moving view on till then instead
+    // took the GPU from the first pass: 10 s to it on Dan's phone, 1 s without.)
+    turnHold += ((refining && refN === 0 ? 0 : 1) - turnHold) * (1 - Math.exp(-dt * 4));
+    let da = turnRate(turnT, turnEase()) * turnMul * turnHold * dt;
     // Never past what the rest's refinement covers: it eases to a stop at its edge, if it ever gets there.
     if (refining && refTurns) {
       const off = view.a - refView.a;
@@ -1231,7 +1266,7 @@ void main() {
           restWaiting = canRefine && TAA; restAt = now; settleRead = null; settleReads = 0;
           settleAt = null; holdUntil = now + (restWaiting ? (endRest ? END_MAX : REST_MAX) : REST_HOLD); holdLen = restWaiting ? (endRest ? END_MAX : REST_MAX) : REST_HOLD; movedT = 0; nextRest = restIn();
           steerT = 0; easeFor = REST_RESUME; vel = { x: 0, y: 0 }; target = { x: view.x, y: view.y }; aim = { ...target };
-          restEase = 0; restHolding = true; say('resting and refining'); loadNext();
+          restEase = 0; restHolding = true; say('sharpening this view'); loadNext();
         }
       }
       const ease = smooth(0, easeFor, steerT) * (0.25 + 0.75 * smooth(minH, minH * 6, view.h)) * restEase;
@@ -1263,12 +1298,11 @@ void main() {
     if (wantRefine && !refining) startRefine();
     if (!wantRefine && refining) { if (refTurns && refN >= REF_SEED) bakeRefined(); stopRefine(); }
     if (refining) {
+      readChange(now);
       if (restWaiting && restHolding && !paused) watchSettle(now);
       const got = refineTick(now, raw);
-      // Till its first sample (seconds, for a heavy one) the moving view keeps drawing: the blend
-      // waiting meanwhile while the view turned on ran out at the edges, streaking (Dan).
-      if (refN === 0 && refining) renderTaa();
-      else if (!got && !refTurns) return;   // nothing new: the canvas keeps its picture (unless it turns)
+      capRefine(now);
+      if (!got && !refTurns) return;   // nothing new: the canvas keeps its picture (unless it turns)
       // Faded in over REF_IN s: switched on in one frame, its sharper picture popped (measured: a
       // frame-to-frame change 4x the settling motion's).
       refMix = Math.min(1, (now - refStartT) / REF_IN);
@@ -1283,11 +1317,10 @@ void main() {
 
   // A rest's refinement settling (REST_STILL): when it has, or has turned as far as it refined, the
   // rest's end is set, and the pause pearl's ring (full till then) runs down to it.
-  function watchSettle(now) {
-    let done = refN >= REF_MAX || refTurns && Math.abs(view.a - refView.a) > refAngGo;
-    if (done) restWhy = refN >= REF_MAX ? 'max samples' : 'turned ' + Math.abs(view.a - refView.a).toFixed(3) + ' of ' + refAngGo.toFixed(3);
-    if (!done && refN >= (endRest ? END_MIN_N : REST_SAMPLES)) { done = true; restWhy = refN + ' samples'; }
-    if (!done && now - settleReadAt >= 1 && refN > 0) {
+  // How fast the refinement's picture is still changing (restRate, of 255 a second), read once a
+  // second at the middle whenever it refines: the rest's settling, and the pause pearl's moon.
+  function readChange(now) {
+    if (now - settleReadAt >= 1 && refN > 0) {
       const x = Math.max(0, (acc.w - SETTLE_PX) >> 1), y = Math.max(0, (acc.h - SETTLE_PX) >> 1);
       const w = Math.min(SETTLE_PX, acc.w), h = Math.min(SETTLE_PX, acc.h);
       gl.bindFramebuffer(gl.READ_FRAMEBUFFER, acc.fb);
@@ -1300,12 +1333,17 @@ void main() {
         for (let i = 0; i < n * 3; i++) d += Math.abs(mean[i] - settleRead[i]);
         const rate = d / (n * 3) * 255 / (now - settleReadAt);   // (of 255, a second)
         settleReads = rate < REST_STILL ? settleReads + 1 : 0;
-        restRate = rate;
-        if (settleReads >= 2 && (!endRest || refN >= END_MIN_N)) { done = true; restWhy = 'settled ' + rate.toFixed(2); }
+        restRate = rate; rateKnown = true;
       }
-      if (!settleRead || refN < settleReadN) settleReads = 0;   // (begun again, smaller: watchFps)
+      if (!settleRead || refN < settleReadN) { settleReads = 0; rateKnown = false; }   // (begun again, smaller: watchFps)
       settleRead = mean; settleReadAt = now; settleReadN = refN;
     }
+  }
+  function watchSettle(now) {
+    let done = refN >= REF_MAX || refTurns && Math.abs(view.a - refView.a) > refAngGo;
+    if (done) restWhy = refN >= REF_MAX ? 'max samples' : 'turned ' + Math.abs(view.a - refView.a).toFixed(3) + ' of ' + refAngGo.toFixed(3);
+    if (!done && refN >= (endRest ? END_MIN_N : REST_SAMPLES)) { done = true; restWhy = refN + ' samples'; }
+    if (!done && settleReads >= 2 && (!endRest || refN >= END_MIN_N)) { done = true; restWhy = 'settled ' + restRate.toFixed(2); }
     if (now - restAt > (endRest ? END_MAX : REST_MAX)) { done = true; restWhy = 'max time'; }
     if (!done) return;
     restWaiting = false;
@@ -1430,7 +1468,7 @@ void main() {
       return iterCap;
     },
     togglePause() { paused = !paused; if (paused) loadNext(); restHolding = false; restWaiting = false; endRest = false; if (ended) { ended = false; leaving = false; fadeDir = 1; } if (!paused) { steerT = 0; easeFor = 1.2; holdUntil = -1e9; settleAt = null; movedT = 0; } return paused; },
-    state: () => ({ iterCap, heavyCost, gpuRate, fitting: order.filter(fits).length, of: order.length, endRest, ended, restWhy, restRate, rest: restHolding ? (restWaiting ? 'settling' : 'ending') : '', restFor: restHolding ? +(performance.now() / 1000 - restAt).toFixed(1) : 0, fade, leaving, step, scale: steps()[step][0], still, refining, refN, refMix, bands, bandMs, frameInt, refDuty, refScale: refScaleNow(), acc: acc && acc.w + "x" + acc.h, frames, h: view.h, a: view.a, minH, refAng, refAngGo, refA: refView ? refView.a : null, picRho, edgeMiss: { ...edgeMiss } }),
+    state: () => ({ iterCap, heavyCost, gpuRate, fitting: order.filter(fits).length, of: order.length, endRest, ended, restWhy, restRate, rest: restHolding ? (restWaiting ? 'settling' : 'ending') : '', restFor: restHolding ? +(performance.now() / 1000 - restAt).toFixed(1) : 0, fade, leaving, step, scale: steps()[step][0], still, refining, refN, refMix, bands, bandMs, frameInt, refDuty, refScale: refScaleNow(), acc: acc && acc.w + "x" + acc.h, frames, h: view.h, a: view.a, minH, refAng, refAngGo, refCap, refA: refView ? refView.a : null, picRho, edgeMiss: { ...edgeMiss }, moonFresh, rateKnown }),
   };
 
   // The GPU lost (a draw that ran too long gets the GPU reset, Chrome showing a white canvas with a
