@@ -211,7 +211,7 @@ void main() {
   }
   const hashStr = str => { let h = 2166136261; for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619); return h >>> 0; };
   let rand = seeded(DAY);
-  const ZOOM_RATE = 0.3;       // octaves a second (quicker since the rests show it sharp; was 0.085, 0.13, 0.2)
+  const ZOOM_RATE = 0.6;       // octaves a second (quicker since the rests show it sharp; was 0.085, 0.13, 0.2, 0.3)
   const TURN_MAX = 0.035;      // the most it turns, radians a second (~2°; ~1.4° a second on average; was 0.015, 0.025)
   let turnT = 0, turnPh = 0, turnSteer = 0;   // (turnSteer: s since a start or a touch)
   // Its rate, radians a second, at turn time t: a low, signed noise (two slow sines).
@@ -226,7 +226,8 @@ void main() {
   const IDLE_RESUME = 9;       // seconds after a touch before it steers itself again
   // Rests: the dive eases to a stop now and then (after REST_EVERY s of moving) and holds still for
   // REST_HOLD s, so the refinement gets to show; the pause pearl counts it down as after a touch.
-  const REST_EVERY = [15, 30], REST_HOLD = 11, REST_SETTLE = 3, REST_RESUME = 3;
+  const REST_EVERY = [7.5, 15],   // (halved, Dan, 2026-11-21: was 15-30)
+        REST_HOLD = 11, REST_SETTLE = 3, REST_RESUME = 3;
   // ...or, where it refines, for as long as the picture's still settling (Dan): about once a second
   // the middle of the refinement is read back, and once it changes by under REST_STILL (of 255)
   // a second it holds REST_AFTER s more. Never under REST_MIN s or over REST_MAX; and it ends
@@ -236,7 +237,7 @@ void main() {
   // done at REST_SAMPLES samples a pixel (END_MIN_N at the depth's end), as the settling read
   // seldom came under REST_STILL (busy fractals keep changing a little), so rests ran to their
   // caps; then REST_AFTER s more, turning, and on.
-  const REST_MIN = 4, REST_MAX = 20, REST_AFTER = 3, REST_STILL = 1, REST_TURN_FOR = 12.5, REST_SAMPLES = 16;
+  const REST_MIN = 4, REST_MAX = 20, REST_AFTER = 3, REST_STILL = 1, REST_TURN_FOR = 9, REST_SAMPLES = 16;   // (REST_TURN_FOR 9 since it turns faster in a rest)
   // No rest till it's moved REST_MOVE_FIRST s since a start or a touch (Dan: after looking around
   // by hand it went straight into a rest: the time since the last rest had kept counting).
   const REST_MOVE_FIRST = 4;
@@ -807,7 +808,7 @@ void main() {
     if (restHolding && !paused && !endRest) {
       const now = performance.now() / 1000, ease = turnEase();
       const T = (restWaiting ? Math.max(0, restAt + REST_TURN_FOR - now) : Math.max(0, holdUntil - now)) + 0.5;
-      for (let t = 0; t < T; t += 0.1) ang += turnRate(turnT + t, ease) * 0.1;
+      for (let t = 0; t < T; t += 0.1) ang += turnRate(turnT + t, ease) * REST_TURN_MUL * 0.1;
       ang = Math.min(0.5, Math.abs(ang) * 1.15 + 0.002);
     }
     refTurns = ang > 0; refAng = ang;
@@ -990,7 +991,14 @@ void main() {
   // A very slow turn, its way and speed a low, signed noise. Eased in after a start or a touch and
   // towards the end of its depth, but not into the rests: it turns on through them.
   const turnEase = () => smooth(0, 4, turnSteer) * (0.25 + 0.75 * smooth(minH, minH * 6, view.h));
-  function turn(dt) { turnT += dt; turnSteer += dt; view.a += turnRate(turnT, turnEase()) * dt; }
+  // In a rest it turns REST_TURN_MUL x as fast, eased in and out over a second or so (Dan: the
+  // turn didn't read while it refined).
+  const REST_TURN_MUL = 2;
+  let turnMul = 1;
+  function turn(dt) {
+    turnMul += ((restHolding && !endRest ? REST_TURN_MUL : 1) - turnMul) * (1 - Math.exp(-dt));
+    turnT += dt; turnSteer += dt; view.a += turnRate(turnT, turnEase()) * turnMul * dt;
+  }
   const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
   // Black till the next one begins (begin sets cur again): the canvas cleared, its poster hidden.
   function blackOut() {
