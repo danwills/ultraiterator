@@ -437,16 +437,45 @@ void main() {
     return tex;
   }
 
+  // A port's source as drawn here. Each layer's inside branch counts it, for the steering's lakes
+  // (see look). And its iterations are capped by uIterCap, the iterations pearl (a variable bound
+  // measured no slower at 1), with its inside colouring scaled to match (Dan: "so we end up in a
+  // similar bit of the gradient"): a point still going at the cap has done cap of its iterations,
+  // so whatever its colouring adds up each iteration (i_sum, i_sum2; prodlog(i_lp), a sum of logs,
+  // where it's over numiter) is scaled by full / capped, as if the rest had added the same again.
+  // Minimums (i_dmin, i_closest) and averages over their own count (i_lp / i_n) need nothing, and
+  // a point that bails, as it would have anyway, is unchanged. Measured over the 63 at half the
+  // iterations: the median change 62 of 255 unscaled, 24 scaled. Tried and worse (2026-11-21):
+  // summing exp(-1/|step|)'s tail from the step's shrinking ratio (the orbits at the cap mostly
+  // wander rather than converge, so the ratio's noise), and letting converging points out early.
+  // (Each layer's loop is matched with the inside branch after it: one each in all 63. opts.pad
+  // false leaves the scaling out, for tests.)
+  function capSource(src, opts = {}) {
+    let out = '', i = 0;
+    const loop = /for \(int it = 0; it < (\d+); it\+\+\)/g;
+    let m;
+    while ((m = loop.exec(src))) {
+      const n = m[1], eff = 'max(1, int(float(' + n + ') * uIterCap))';
+      const head = 'if (inside && !FORCEOUT) {', at = src.indexOf(head, m.index);
+      if (at < 0) break;
+      let d = 1, j = at + head.length;
+      while (j < src.length && d) { if (src[j] === '{') d++; else if (src[j] === '}') d--; j++; }
+      let branch = src.slice(at + head.length, j - 1);
+      if (opts.pad !== false) branch = ' float iPad_ = float(' + n + ') / float(' + eff + ');' + branch
+        .replace(/\bi_sum2\b/g, '(i_sum2 * iPad_)').replace(/\bi_sum\b/g, '(i_sum * iPad_)')
+        .replace(/prodlog\((i_lp|i_old)\) \/ float\(numiter/g, 'prodlog($1) * iPad_ / float(numiter');
+      out += src.slice(i, m.index) + 'for (int it = 0; it < ' + eff + '; it++)' + src.slice(m.index + m[0].length, at) +
+        'gLayers += 1.0; gInside += float(inside); ' + head + branch + '}';
+      i = j; loop.lastIndex = j;
+    }
+    return out + src.slice(i);
+  }
   const SLOW = +(new URLSearchParams(location.search).get('slow') || 0);
   const loaded = new Map();
   function load(pick) {
     if (!loaded.has(pick.id)) {
       loaded.set(pick.id, (async () => {
-        // (Each layer's inside branch counts it, for the steering's lakes: see look.)
-        const src = (await (await fetch('live/' + pick.id + '.glsl')).text())
-          .replace(/^(\s*)if \(inside && !FORCEOUT\)/gm, '$1gLayers += 1.0; gInside += float(inside); if (inside && !FORCEOUT)')
-          // (and its iterations capped by uIterCap: a variable bound measured no slower at 1)
-          .replace(/for \(int it = 0; it < (\d+); it\+\+\)/g, 'for (int it = 0; it < max(1, int(float($1) * uIterCap)); it++)');
+        const src = capSource(await (await fetch('live/' + pick.id + '.glsl')).text());
         if (SLOW) await new Promise(r => setTimeout(r, SLOW));   // (?slow=ms: a slow compile, to test the wait)
         const [prog, tex] = await Promise.all([program(HEAD + common + src + MAIN), gradient(pick.id)]);
         return { pick, prog, tex, uni: uniforms(prog, ['uGrad', 'uAA', 'uView', 'uRes', 'uJitter', 'uRot', 'uLake', 'uIterCap']) };
@@ -1265,6 +1294,7 @@ void main() {
       }
     },
     // Play: off at once (no wait after a touch), up to speed in a second or so.
+    capSource,   // (for tests)
     // The iterations pearl: down a step (up, with Shift or a right click), round again past the ends.
     iters(dir) {
       const i = ITER_STEPS.indexOf(iterCap);
