@@ -335,7 +335,11 @@ void main() {
   // the worst place the view can be. (Was 2, from the 2k's middle only: precision blocks crept in at
   // the end of some dives, Dan.) Each layer maps the view's o to c = C + R o, both in fp32 on the
   // GPU, so its step is c's own (ulp at |c|, which grows away from the middle) plus o's, by |R|.
-  const PRECISION_ULPS = 8;
+  // 16 (was 8, from 2 before that): precision trouble was still seen at the end of a dive
+  // (Dan, 2026-11-21: "extra careful"). Median ~16x past the 2k over the 63, the least 3.3x.
+  // (Measuring it directly, as the view drawn twice with c rounded two ways, didn't work: past
+  // the limit both collapse to the same flat colour, and chaotic ones differ at any depth.)
+  const PRECISION_ULPS = 16;
   const ulp32 = x => 2 ** (Math.floor(Math.log2(Math.max(Math.abs(x), 1e-30))) - 23);
   const mapsOf = src => [...src.matchAll(/const vec2 C\d+ = vec2\(([^,]+), ([^)]+)\), R\d+ = vec2\(([^,]+), ([^)]+)\)/g)]
     .map(m => ({ cx: +m[1], cy: +m[2], r: Math.hypot(+m[3], +m[4]) }));
