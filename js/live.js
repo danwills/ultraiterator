@@ -17,19 +17,24 @@ uniform vec3 uView;        // the view's middle (x, y) and height (z), in the pi
 uniform vec2 uRes;
 uniform vec2 uJitter;      // this frame's sub-pixel offset
 uniform vec2 uRot;         // the view's turn, (cos, sin)
+uniform int uLake;         // 1: alpha is how much isn't lake (the steering's looks), else 1
 out vec4 frag;
+float gInside, gLayers;    // layers inside, of those run, for this sample (counted in at each layer's inside branch)
 vec2 uiTurn(vec2 r, vec2 p) { return vec2(r.x * p.x - r.y * p.y, r.y * p.x + r.x * p.y); }   // p turned by r = (cos, sin)
 `;
   // As the app's LIVE_GEN_MAIN, but `o` from the view rather than a tile.
   const MAIN = `
 void main() {
     vec3 sum = vec3(0.0);
-    float px = uView.z / uRes.y;
+    float px = uView.z / uRes.y, lake = 0.0;
     for (int j = 0; j < uAA; j++) for (int i = 0; i < uAA; i++) {
         vec2 f = gl_FragCoord.xy + uJitter + (vec2(i, j) + 0.5) / float(uAA) - 0.5;
+        gInside = 0.0; gLayers = 0.0;
         sum += liveColour(uView.xy + uiTurn(uRot, (f - 0.5 * uRes) * px));
+        if (gLayers > 0.0) lake += gInside / gLayers;
     }
-    frag = vec4(clamp(sum / float(uAA * uAA), 0.0, 1.0), 1.0);
+    float n = float(uAA * uAA);
+    frag = vec4(clamp(sum / n, 0.0, 1.0), uLake == 1 ? 1.0 - lake / n : 1.0);
 }`;
   const VS = `#version 300 es
 in vec2 aPos;
@@ -436,10 +441,12 @@ void main() {
   function load(pick) {
     if (!loaded.has(pick.id)) {
       loaded.set(pick.id, (async () => {
-        const src = await (await fetch('live/' + pick.id + '.glsl')).text();
+        // (Each layer's inside branch counts it, for the steering's lakes: see look.)
+        const src = (await (await fetch('live/' + pick.id + '.glsl')).text())
+          .replace(/^(\s*)if \(inside && !FORCEOUT\)/gm, '$1gLayers += 1.0; gInside += float(inside); if (inside && !FORCEOUT)');
         if (SLOW) await new Promise(r => setTimeout(r, SLOW));   // (?slow=ms: a slow compile, to test the wait)
         const [prog, tex] = await Promise.all([program(HEAD + common + src + MAIN), gradient(pick.id)]);
-        return { pick, prog, tex, uni: uniforms(prog, ['uGrad', 'uAA', 'uView', 'uRes', 'uJitter', 'uRot']) };
+        return { pick, prog, tex, uni: uniforms(prog, ['uGrad', 'uAA', 'uView', 'uRes', 'uJitter', 'uRot', 'uLake']) };
       })());
     }
     return loaded.get(pick.id);
@@ -506,9 +513,10 @@ void main() {
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
-  function drawFractal(w, h, v, aa, jx, jy) {
+  function drawFractal(w, h, v, aa, jx, jy, lake) {
     const u = cur.uni;
     gl.useProgram(cur.prog);
+    gl.uniform1i(u.uLake, lake ? 1 : 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, cur.tex);
     gl.uniform1i(u.uGrad, 0);
@@ -527,7 +535,7 @@ void main() {
   // (and straight on) are each looked at deeper (lookAhead) before it picks.
   function look() {
     gl.bindFramebuffer(gl.FRAMEBUFFER, probe.fb);
-    drawFractal(PROBE, PROBE, view, 1, 0, 0);
+    drawFractal(PROBE, PROBE, view, 1, 0, 0, true);
     gl.readPixels(0, 0, PROBE, PROBE, gl.RGBA, gl.UNSIGNED_BYTE, probePx);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     const L = (x, y) => { const k = (y * PROBE + x) * 4; return 0.3 * probePx[k] + 0.59 * probePx[k + 1] + 0.11 * probePx[k + 2]; };
@@ -535,9 +543,10 @@ void main() {
     const sv = { x: ca * vel.x + sa * vel.y, y: -sa * vel.x + ca * vel.y };   // (its drift on screen)
     const cells = [];
     for (let y = 4; y < PROBE - 4; y += 2) for (let x = 4; x < PROBE - 4; x += 2) {
-      let s = 0, s2 = 0;
-      for (let j = -2; j <= 2; j++) for (let i = -2; i <= 2; i++) { const l = L(x + i, y + j); s += l; s2 += l * l; }
-      const sd = Math.sqrt(Math.max(s2 / 25 - (s / 25) * (s / 25), 0));
+      let s = 0, s2 = 0, land = 0;
+      for (let j = -2; j <= 2; j++) for (let i = -2; i <= 2; i++) { const l = L(x + i, y + j); s += l; s2 += l * l; land += probePx[((y + j) * PROBE + x + i) * 4 + 3]; }
+      // (A cell that's mostly lake scores less: its grain read as detail. Shores count fully.)
+      const sd = Math.sqrt(Math.max(s2 / 25 - (s / 25) * (s / 25), 0)) * shore(land / 25 / 255);
       const dx = x / PROBE - 0.5, dy = y / PROBE - 0.5, r = Math.hypot(dx, dy);
       const along = sp > 1e-4 && r > 1e-3 ? (dx * sv.x + dy * sv.y) / (r * sp) : 0;
       cells.push({ x, y, r, along, score: sd * (1 - 1.2 * r * r) * (1 + 0.5 * along) + rand() * 4 });
@@ -569,13 +578,20 @@ void main() {
   // Each spot drawn LOOK_PX square at each of LOOK_DEEP, all into one small target (each tile's
   // view shifted by its offset, so the port's shader needn't know), and read back at once. Its
   // score is how much of it has detail at both depths (the geometric mean), times how strong.
+  // Lakes (Dan: "avoid the lakes, not all the interesting bits"): inside the set, every pixel runs
+  // to its most iterations, the slowest to draw and refine (one dive rested in one at a sample a
+  // pixel in 10 s), and some insides' colourings are a fine grain the contrast took for detail.
+  // The ports' inside flags say where they are (uLake): a look counts lake pixels as no detail,
+  // and one mostly lake (over LAKE_OK of it) is let down gently to nothing at all lake.
+  const LAKE_OK = 0.5;
+  const shore = land => Math.min(1, land / (1 - LAKE_OK));
   function lookAhead(spots) {
     const D = LOOK_PX, ca = Math.cos(view.a), sa = Math.sin(view.a);
     gl.bindFramebuffer(gl.FRAMEBUFFER, ahead.fb);
     const u = cur.uni;
     gl.useProgram(cur.prog);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, cur.tex);
-    gl.uniform1i(u.uGrad, 0); gl.uniform1i(u.uAA, 1);
+    gl.uniform1i(u.uGrad, 0); gl.uniform1i(u.uAA, 1); gl.uniform1i(u.uLake, 1);
     gl.uniform2f(u.uRes, D, D); gl.uniform2f(u.uJitter, 0, 0); gl.uniform2f(u.uRot, ca, sa);
     gl.bindBuffer(gl.ARRAY_BUFFER, quad); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     spots.forEach((p, i) => LOOK_DEEP.forEach((k, j) => {
@@ -590,15 +606,18 @@ void main() {
     return spots.map((p, i) => {
       let g = 1;
       LOOK_DEEP.forEach((k, j) => {
-        let busy = 0, n = 0, sum = 0;
+        let busy = 0, n = 0, sum = 0, land = 0;
         for (let y = 1; y < D - 1; y++) for (let x = 1; x < D - 1; x++) {
+          const k = ((j * D + y) * W + i * D + x) * 4 + 3, dry = aheadPx[k] / 255;
+          land += dry; n++;
+          if (dry < 0.5) continue;   // (a lake pixel: its grain isn't detail)
           let s = 0, s2 = 0;
           for (let b = -1; b <= 1; b++) for (let a = -1; a <= 1; a++) { const l = L(i * D + x + a, j * D + y + b); s += l; s2 += l * l; }
           const sd = Math.sqrt(Math.max(s2 / 9 - (s / 9) * (s / 9), 0));
           if (sd > 6) busy++;
-          sum += Math.min(sd, 40); n++;
+          sum += Math.min(sd, 40);
         }
-        g *= (busy / n) * (0.4 + sum / n / 40) + 1e-3;
+        g *= (busy / n) * (0.4 + sum / n / 40) * shore(land / n) + 1e-3;
       });
       return Math.sqrt(g);
     });
