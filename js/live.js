@@ -911,6 +911,10 @@ void main() {
       gl.deleteSync(refSync); refSync = null; done = true;
       const busy = now - refSubmit;
       bandMs = busy * 1000;
+      // A band that held the GPU for frames: the rest of this pass in halves at once, not from
+      // the next pass (a heavy view's whole first pass, each band seconds long, risked the GPU's
+      // reset). (band is the next one's: in twice as many, it's at 2 band.)
+      if (busy > 2.5 * frameInt && bands < 1024) { band *= 2; bands *= 2; }
       refRest = now + busy * (1 / refDuty - 1);
     }
     if (refQueue.length || refSync || refN >= REF_MAX || now < refRest) return done;
@@ -1277,7 +1281,20 @@ void main() {
     state: () => ({ iterCap, heavyCost, gpuRate, fitting: order.filter(fits).length, of: order.length, endRest, ended, restWhy, restRate, rest: restHolding ? (restWaiting ? 'settling' : 'ending') : '', restFor: restHolding ? +(performance.now() / 1000 - restAt).toFixed(1) : 0, fade, leaving, step, scale: steps()[step][0], still, refining, refN, refMix, bands, bandMs, frameInt, refDuty, refScale: refScaleNow(), acc: acc && acc.w + 'x' + acc.h, frames, h: view.h, a: view.a, minH }),
   };
 
-  canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); cur = null; });
+  // The GPU lost (a draw that ran too long gets the GPU reset, Chrome showing a white canvas with a
+  // sad face; Dan saw it): the fractal's own render instead, as giveUp, and the one it was drawing
+  // is noted as too heavy here (tooHeavy), so it and any as heavy are passed over next time.
+  canvas.addEventListener('webglcontextlost', e => {
+    e.preventDefault();
+    const pick = cur ? cur.pick : order[at];
+    console.warn('live: the GPU context was lost' + (pick ? ' drawing ' + pick.id : ''));
+    if (pick) {
+      heavyCost = Math.min(heavyCost, costOf(pick));
+      try { localStorage.setItem(HEAVY_KEY, String(heavyCost)); } catch (err) {}
+      if (poster) poster.style.backgroundImage = 'url(live/' + pick.id + '.webp)';
+    }
+    giveUp();
+  });
 
   (async () => {
     let picks;

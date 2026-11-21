@@ -394,10 +394,14 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
   gl.attachShader(prog, fs);
   gl.bindAttribLocation(prog, 0, 'aPos');
   gl.linkProgram(prog);
+  // (The GPU lost, for the live hero's sake or its own: the pebbles and pearls as CSS, not a
+  // white page with Chrome's sad face over it.)
+  canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); ready = false; canvas.remove(); document.body.classList.remove('gems'); document.body.classList.add('no-gems'); });
   const parallel = gl.getExtension('KHR_parallel_shader_compile');
   let ready = false;
   const U = {};
   function checkReady() {
+    if (gl.isContextLost()) return false;
     if (parallel && !gl.getProgramParameter(prog, parallel.COMPLETION_STATUS_KHR)) return false;
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
       console.warn(gl.getShaderInfoLog(fs)); document.body.classList.add('no-gems'); canvas.remove(); return false;
