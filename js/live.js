@@ -444,7 +444,7 @@ void main() {
 
   // (starting: a begin is waiting for its fractal; frames meanwhile mustn't start more. They had,
   // one a frame, each the next along, compiling several at once: black for ages between fractals.)
-  let starting = false, beganAt = 0, queued = null;
+  let starting = false, beganAt = 0, queued = null, begun = false;
   // The next fractal's compiled while this one rests (or is paused), the view still: a compile
   // takes 0.2-4 s, and the browser's GPU stalls meanwhile (frames of up to half a second here),
   // so compiling as each one began made its start sluggish (Dan). (One not ready by the end is
@@ -459,7 +459,7 @@ void main() {
     rand = seeded(hashStr(DAY + ':' + pick.id)); turnPh = rand() * 6.283; turnT = 0;   // (this dive's own, the same everywhere)
     // A slow compile (a shader not ready yet, ~10 s for some): its 2k render shows meanwhile, not
     // black, and the live one cross-fades in over it once it's ready.
-    const first = !cur;   // (the page's very first: its render shows straight away, the GPU's busiest then)
+    const first = !begun; begun = true;   // (the page's very first: its render shows straight away, the GPU's busiest then)
     const waitT = setTimeout(() => {
       if (!starting) return;
       if (poster) { poster.style.backgroundImage = 'url(live/' + pick.id + '.webp)'; poster.classList.remove('gone'); }
@@ -985,6 +985,14 @@ void main() {
   const turnEase = () => smooth(0, 4, turnSteer) * (0.25 + 0.75 * smooth(minH, minH * 6, view.h));
   function turn(dt) { turnT += dt; turnSteer += dt; view.a += turnRate(turnT, turnEase()) * dt; }
   const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  // Black till the next one begins (begin sets cur again): the canvas cleared, its poster hidden.
+  function blackOut() {
+    cur = null;
+    if (poster) poster.classList.add('gone');
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+  }
   let prev = performance.now() / 1000;
   function frame() {
     requestAnimationFrame(frame);
@@ -1174,7 +1182,11 @@ void main() {
       wanted = id;
       if (!order.length) return;   // (still loading: it starts with it)
       const i = order.findIndex(p => p.id === id);
-      if (i >= 0 && !(cur && cur.pick.id === id)) { if (starting) queued = i; else begin(i); }
+      if (i >= 0 && !(cur && cur.pick.id === id)) {
+        // Black at once, not the one before while this one compiles (Dan); it fades in from there.
+        if (cur) blackOut();
+        if (starting) queued = i; else begin(i);
+      }
     },
     // Play: off at once (no wait after a touch), up to speed in a second or so.
     togglePause() { paused = !paused; if (paused) loadNext(); restHolding = false; restWaiting = false; endRest = false; if (ended) { ended = false; leaving = false; fadeDir = 1; } if (!paused) { steerT = 0; easeFor = 1.2; holdUntil = -1e9; settleAt = null; movedT = 0; } return paused; },
