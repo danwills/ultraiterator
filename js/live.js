@@ -232,7 +232,14 @@ void main() {
   // a second it holds REST_AFTER s more. Never under REST_MIN s or over REST_MAX; and it ends
   // early rather than turn past what it refined (REST_TURN_FOR s of turn's worth, see startRefine).
   // (Dan: rested too long; all halved, 2026-11-21: they were 8, 40, 5, 25, with REST_HOLD 22.)
-  const REST_MIN = 4, REST_MAX = 20, REST_AFTER = 2.5, REST_STILL = 1, REST_TURN_FOR = 12.5;
+  // ...and then (Dan: "wait until refinement is done, then a few more seconds of rotate drift"):
+  // done at REST_SAMPLES samples a pixel (END_MIN_N at the depth's end), as the settling read
+  // seldom came under REST_STILL (busy fractals keep changing a little), so rests ran to their
+  // caps; then REST_AFTER s more, turning, and on.
+  const REST_MIN = 4, REST_MAX = 20, REST_AFTER = 3, REST_STILL = 1, REST_TURN_FOR = 12.5, REST_SAMPLES = 16;
+  // No rest till it's moved REST_MOVE_FIRST s since a start or a touch (Dan: after looking around
+  // by hand it went straight into a rest: the time since the last rest had kept counting).
+  const REST_MOVE_FIRST = 4;
   const SETTLE_PX = 48;
   let restWhy = '', restRate = 0, restWaiting = false, restAt = 0, settleRead = null, settleReadAt = 0, settleReadN = 0, settleReads = 0, refAng = 0;
   const settlePx = new Float32Array(SETTLE_PX * SETTLE_PX * 4);
@@ -1008,7 +1015,8 @@ void main() {
       // Ease in after a start, a touch or a rest, out into a rest, and out towards the end of its depth.
       steerT += dt; movedT += dt;
       if (settleAt === null && !leaving && fade >= 1) {
-        if (!endRest && view.h <= minH * END_REST_AT) { settleAt = now; endRest = true; }
+        if (movedT < REST_MOVE_FIRST) {}
+        else if (!endRest && view.h <= minH * END_REST_AT) { settleAt = now; endRest = true; }
         else if (movedT > nextRest && view.h > minH * 8) settleAt = now;
       }
       let restEase = 1;
@@ -1068,6 +1076,7 @@ void main() {
   function watchSettle(now) {
     let done = refN >= REF_MAX || refTurns && Math.abs(view.a - refView.a) > refAng - 0.01;
     if (done) restWhy = refN >= REF_MAX ? 'max samples' : 'turned ' + Math.abs(view.a - refView.a).toFixed(3) + ' of ' + refAng.toFixed(3);
+    if (!done && refN >= (endRest ? END_MIN_N : REST_SAMPLES)) { done = true; restWhy = refN + ' samples'; }
     if (!done && now - settleReadAt >= 1 && refN > 0) {
       const x = Math.max(0, (acc.w - SETTLE_PX) >> 1), y = Math.max(0, (acc.h - SETTLE_PX) >> 1);
       const w = Math.min(SETTLE_PX, acc.w), h = Math.min(SETTLE_PX, acc.h);
@@ -1096,6 +1105,7 @@ void main() {
   // After the hand: carry on from here, still.
   function touched() {
     holdUntil = performance.now() / 1000 + IDLE_RESUME; holdLen = IDLE_RESUME; settleAt = null; restHolding = false; restWaiting = false;
+    movedT = 0; nextRest = restIn();
     // (At the depth's end: a touch keeps it here, and it rests there again before it moves on.)
     if (ended) { ended = false; leaving = false; fadeDir = 1; }
     endRest = false;
