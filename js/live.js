@@ -406,7 +406,7 @@ void main() {
     return new Promise((resolve, reject) => {
       const check = () => {
         if (parallel && !gl.getProgramParameter(p, parallel.COMPLETION_STATUS_KHR)) { setTimeout(check, 30); return; }
-        if (!gl.getProgramParameter(p, gl.LINK_STATUS)) reject(new Error(gl.getShaderInfoLog(f) || gl.getProgramInfoLog(p)));
+        if (!gl.getProgramParameter(p, gl.LINK_STATUS)) reject(Object.assign(new Error(gl.getShaderInfoLog(f) || gl.getProgramInfoLog(p)), { compile: true }));
         else resolve(p);
       };
       check();
@@ -498,7 +498,33 @@ void main() {
   // waited for, its render showing.)
   const loadNext = () => { if (order.length) load(order[nextFitting(at)]).catch(() => {}); };
   const WAIT_SHOW = 0.4;   // s of waiting before the render's shown   // (queued: a show() that came while starting)
+  // A fractal that didn't load (Dan: clicking one, it cycled through them all, a frame each): it
+  // had been dropped and the next begun at once, so with the network down (each fetch failing at
+  // once) the list emptied in seconds, and a failed load stayed failed. Now its render shows and
+  // the same one's tried again (LOAD_RETRY s, longer each time); a shader that won't compile is
+  // dropped as before, but COMPILE_GIVE_UP of them running means something's wrong here, and with
+  // the GPU lost it stops at once: either way, the render (giveUp).
+  const LOAD_RETRY = 3, COMPILE_GIVE_UP = 3;
+  let loadFails = 0, compileFails = 0, retryT = 0;
+  function loadFailed(pick, e) {
+    loaded.delete(pick.id);
+    cur = null;   // (the one before stops, or its fade's end would begin another each frame)
+    if (gl.isContextLost()) { giveUp(); return; }
+    if (e && e.compile) {
+      console.warn('live: ' + pick.id + ' did not compile', e);
+      order.splice(at, 1);
+      if (++compileFails >= COMPILE_GIVE_UP || !order.length) { if (poster) poster.style.backgroundImage = 'url(live/' + pick.id + '.webp)'; giveUp(); return; }
+      begin(at);
+      return;
+    }
+    console.warn('live: ' + pick.id + ' did not load; again in ' + LOAD_RETRY * (loadFails + 1) + ' s', e);
+    if (poster) { poster.style.backgroundImage = 'url(live/' + pick.id + '.webp)'; poster.classList.remove('gone'); }
+    document.body.classList.add('waiting');
+    clearTimeout(retryT);
+    retryT = setTimeout(() => { if (!cur && !starting) begin(at); }, LOAD_RETRY * 1000 * Math.min(++loadFails, 10));
+  }
   async function begin(i) {
+    clearTimeout(retryT);
     if (starting) return;
     starting = true;
     at = (i + order.length) % order.length;
@@ -514,7 +540,8 @@ void main() {
     }, first ? 0 : WAIT_SHOW * 1000);
     let next;
     try { next = await load(pick); }
-    catch (e) { console.warn('live: ' + pick.id + ' did not compile', e); order.splice(at, 1); starting = false; if (order.length) begin(at); return; }
+    catch (e) { starting = false; clearTimeout(waitT); loadFailed(pick, e); return; }
+    loadFails = 0; compileFails = 0;
     starting = false;
     clearTimeout(waitT);
     if (queued !== null) { const q = queued; queued = null; begin(q); return; }
