@@ -244,7 +244,7 @@ void main() {
   // a high-res"): it refines at the screen's full resolution whatever the refinement had stepped
   // down to (watchFps), doesn't turn (so needs no margin and never runs out of it), and holds till
   // END_MIN_N samples a pixel and settled, or END_MAX s.
-  const END_MIN_N = 32, END_MAX = 30;   // (halved with the rests: they were 64, 60)
+  const END_MIN_N = 32, END_MAX = 20;   // (were 64, 60; Dan: the longest rest 20 s)
   const REST_LEAD = 5;         // seconds of moving the pause pearl shows a rest coming (and then its settling)
   // A word under the pause pearl as a rest begins and ends.
   const sayEl = document.getElementById('live-say'), SAY_FOR = 3.5;
