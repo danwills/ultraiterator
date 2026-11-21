@@ -774,7 +774,14 @@ void main() {
     if (!acc || acc.w !== w || acc.h !== h) { if (acc) acc.free(); acc = target2d(w, h, gl.RGBA32F); }
     gl.bindFramebuffer(gl.FRAMEBUFFER, acc.fb);
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
-    refN = 0; refView = { ...view, h: view.h * h / h0 }; refining = true; refStartT = performance.now() / 1000; band = 0; bands = 1; refRest = 0; bandMs = 0;
+    refN = 0; refView = { ...view, h: view.h * h / h0 }; refining = true; refStartT = performance.now() / 1000; band = 0; refRest = 0; bandMs = 0;
+    // The first pass in bands already, sized from the moving view's frames scaled by the pixels:
+    // as one band, a heavy fractal's first sample at a phone's whole CSS-pixel size held its GPU
+    // for seconds (no timer there to learn from first), and the page went black and wouldn't
+    // scroll (Dan). It's an overestimate (a frame's more than its fractal), and the bands are
+    // halved from there once they're measured.
+    const guess = sampled ? baseFrame * 1000 * (w * h) / (sampled.w * sampled.h) : 0;
+    bands = Math.min(1024, 2 ** Math.ceil(Math.log2(Math.max(1, guess / REF_BAND_MAX_MS))));
     refFps = []; refFpsAt = performance.now() / 1000;
   }
   function stopRefine() {
