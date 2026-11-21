@@ -18,6 +18,7 @@ uniform vec2 uRes;
 uniform vec2 uJitter;      // this frame's sub-pixel offset
 uniform vec2 uRot;         // the view's turn, (cos, sin)
 uniform int uLake;         // 1: alpha is how much isn't lake (the steering's looks), else 1
+uniform float uIterCap;    // each layer's iterations x this (1: as UF has them; the iterations pearl)
 out vec4 frag;
 float gInside, gLayers;    // layers inside, of those run, for this sample (counted in at each layer's inside branch)
 vec2 uiTurn(vec2 r, vec2 p) { return vec2(r.x * p.x - r.y * p.y, r.y * p.x + r.x * p.y); }   // p turned by r = (cos, sin)
@@ -443,10 +444,12 @@ void main() {
       loaded.set(pick.id, (async () => {
         // (Each layer's inside branch counts it, for the steering's lakes: see look.)
         const src = (await (await fetch('live/' + pick.id + '.glsl')).text())
-          .replace(/^(\s*)if \(inside && !FORCEOUT\)/gm, '$1gLayers += 1.0; gInside += float(inside); if (inside && !FORCEOUT)');
+          .replace(/^(\s*)if \(inside && !FORCEOUT\)/gm, '$1gLayers += 1.0; gInside += float(inside); if (inside && !FORCEOUT)')
+          // (and its iterations capped by uIterCap: a variable bound measured no slower at 1)
+          .replace(/for \(int it = 0; it < (\d+); it\+\+\)/g, 'for (int it = 0; it < max(1, int(float($1) * uIterCap)); it++)');
         if (SLOW) await new Promise(r => setTimeout(r, SLOW));   // (?slow=ms: a slow compile, to test the wait)
         const [prog, tex] = await Promise.all([program(HEAD + common + src + MAIN), gradient(pick.id)]);
-        return { pick, prog, tex, uni: uniforms(prog, ['uGrad', 'uAA', 'uView', 'uRes', 'uJitter', 'uRot', 'uLake']) };
+        return { pick, prog, tex, uni: uniforms(prog, ['uGrad', 'uAA', 'uView', 'uRes', 'uJitter', 'uRot', 'uLake', 'uIterCap']) };
       })());
     }
     return loaded.get(pick.id);
@@ -464,7 +467,7 @@ void main() {
   // takes 0.2-4 s, and the browser's GPU stalls meanwhile (frames of up to half a second here),
   // so compiling as each one began made its start sluggish (Dan). (One not ready by the end is
   // waited for, its render showing.)
-  const loadNext = () => { if (order.length) load(order[(at + 1) % order.length]).catch(() => {}); };
+  const loadNext = () => { if (order.length) load(order[nextFitting(at)]).catch(() => {}); };
   const WAIT_SHOW = 0.4;   // s of waiting before the render's shown   // (queued: a show() that came while starting)
   async function begin(i) {
     if (starting) return;
@@ -517,6 +520,7 @@ void main() {
     const u = cur.uni;
     gl.useProgram(cur.prog);
     gl.uniform1i(u.uLake, lake ? 1 : 0);
+    gl.uniform1f(u.uIterCap, iterCap);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, cur.tex);
     gl.uniform1i(u.uGrad, 0);
@@ -591,7 +595,7 @@ void main() {
     const u = cur.uni;
     gl.useProgram(cur.prog);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, cur.tex);
-    gl.uniform1i(u.uGrad, 0); gl.uniform1i(u.uAA, 1); gl.uniform1i(u.uLake, 1);
+    gl.uniform1i(u.uGrad, 0); gl.uniform1i(u.uAA, 1); gl.uniform1i(u.uLake, 1); gl.uniform1f(u.uIterCap, iterCap);
     gl.uniform2f(u.uRes, D, D); gl.uniform2f(u.uJitter, 0, 0); gl.uniform2f(u.uRot, ca, sa);
     gl.bindBuffer(gl.ARRAY_BUFFER, quad); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     spots.forEach((p, i) => LOOK_DEEP.forEach((k, j) => {
@@ -649,8 +653,37 @@ void main() {
     }
     return 0;
   }
+  // The iterations pearl (for now, to try it: Dan, "in some cases it could still look good"):
+  // each layer's iterations x iterCap. The colourings mostly sum over every iteration, so nearly
+  // all of them change colour, some a lot (measured: 3 of 63 look the same at half).
+  const ITER_STEPS = [1, 0.7, 0.5, 0.35, 0.25, 0.17, 0.12, 0.08, 0.05];
+  let iterCap = 1;
+  // Fractals too heavy for this machine are passed over (Dan: "rather that than it being insanely
+  // slow on lesser computers or phones"). Seen, not predicted: one that's at the ladder's lowest
+  // step and still under FIT_FPS in its first FIT_WINDOW s (near its 2k, where picks.json's cost
+  // was timed) is noted as too heavy here, kept in this browser, and it moves on; from then on that
+  // one and any as heavy (by picks.json's rows) go by. (Predicting from gpuRate, measured by frame
+  // times, had a desktop passing over 51 of 63.) Never one picked from the gallery, and not while
+  // the iterations pearl's capping them. So a slow phone's order skips some of everyone else's.
+  const FIT_FPS = 12, FIT_WINDOW = 15, HEAVY_KEY = 'ultraiterator-too-heavy';
+  let heavyCost = Infinity, chosen = false;   // (the lightest cost seen too heavy; chosen: from the gallery)
+  try { const v = parseFloat(localStorage.getItem(HEAVY_KEY)); if (v > 0) heavyCost = v; } catch (e) {}
+  const costOf = pick => workOf(1, pick.aa || 1, pick);
+  const fits = pick => iterCap < 1 || costOf(pick) < heavyCost;
+  function tooHeavy(med, now) {
+    if (!cur || chosen || iterCap < 1 || step !== 0 || med <= 1 / FIT_FPS || now - beganAt > FIT_WINDOW) return false;
+    heavyCost = Math.min(heavyCost, costOf(cur.pick));
+    try { localStorage.setItem(HEAVY_KEY, String(heavyCost)); } catch (e) {}
+    console.info('live: ' + cur.pick.id + ' too heavy here (' + Math.round(1 / med) + ' fps at the lowest step); passing over ' + order.filter(p => !fits(p)).length + ' of ' + order.length);
+    return true;
+  }
+  // The next one along from i that fits (or just the next, if none does).
+  function nextFitting(i) {
+    for (let k = 1; k <= order.length; k++) { const j = (i + k) % order.length; if (fits(order[j])) return j; }
+    return (i + 1) % order.length;
+  }
   function noteRate(med) {
-    if (!sampled || !cur) return;
+    if (!sampled || !cur || iterCap < 1) return;   // (capped, it'd look faster than it is)
     const rate = workOf(sampled.w * sampled.h, steps()[step][1], cur.pick) / med;
     // (Frames held to the display's rate say only that it's at least this fast.)
     gpuRate = med < 0.022 ? Math.max(gpuRate, rate) : gpuRate * 0.7 + rate * 0.3;
@@ -667,6 +700,7 @@ void main() {
     baseFrame = med;   // (refinement's frame-rate watch compares against this)
     noteRate(med);
     frameTimes = [];
+    if (tooHeavy(med, now)) { UILive.next(); return; }
     if (med > TOO_SLOW && step === 0) { giveUp(); return; }
     if (med > TOO_SLOW * 2) { step = 0; ceiling = 0; ceilingUntil = now + 600; return; }   // hopeless: straight to the bottom
     if (med > 0.15 && step > 1) step--;   // very slow: a step more
@@ -1077,7 +1111,7 @@ void main() {
     // Fading in only once the blend has a few frames (or the refinement is under way): the very
     // first frames are single noisy samples.
     if (fadeDir < 0 || frames >= READY_FRAMES || refining || now - beganAt > 1) fade = Math.min(1, Math.max(0, fade + fadeDir * dt / FADE));
-    if (leaving && fade <= 0) { begin(at + 1); return; }
+    if (leaving && fade <= 0) { chosen = false; begin(nextFitting(at)); return; }
     const pv = prevView;
     still = pv && pv.x === view.x && pv.y === view.y && pv.h === view.h ? still + 1 : 0;   // (the turn aside: a rest turns on)
     const wantRefine = canRefine && TAA && still > STILL_REFINE && fade >= 1;
@@ -1222,12 +1256,25 @@ void main() {
       if (i >= 0 && !(cur && cur.pick.id === id)) {
         // Black at once, not the one before while this one compiles (Dan); it fades in from there.
         if (cur) blackOut();
+        chosen = true;
         if (starting) queued = i; else begin(i);
       }
     },
     // Play: off at once (no wait after a touch), up to speed in a second or so.
+    // The iterations pearl: down a step (up, with Shift or a right click), round again past the ends.
+    iters(dir) {
+      const i = ITER_STEPS.indexOf(iterCap);
+      iterCap = ITER_STEPS[(i + (dir < 0 ? 1 : -1) + ITER_STEPS.length) % ITER_STEPS.length];   // (the list runs most to fewest)
+      // (Begun again from here: no history or refinement from the old count.)
+      frames = 0; still = 0; prevView = null; stopRefine(); refMix = 0;
+      const pct = Math.round(iterCap * 100) + '%';
+      const el = document.getElementById('iters-pearl');
+      if (el) { el.querySelector('.glyph').textContent = pct; el.title = 'Iterations: ' + pct + ' (click for fewer, Shift-click for more)'; }
+      say('iterations ' + pct);
+      return iterCap;
+    },
     togglePause() { paused = !paused; if (paused) loadNext(); restHolding = false; restWaiting = false; endRest = false; if (ended) { ended = false; leaving = false; fadeDir = 1; } if (!paused) { steerT = 0; easeFor = 1.2; holdUntil = -1e9; settleAt = null; movedT = 0; } return paused; },
-    state: () => ({ endRest, ended, restWhy, restRate, rest: restHolding ? (restWaiting ? 'settling' : 'ending') : '', restFor: restHolding ? +(performance.now() / 1000 - restAt).toFixed(1) : 0, fade, leaving, step, scale: steps()[step][0], still, refining, refN, refMix, bands, bandMs, frameInt, refDuty, refScale: refScaleNow(), acc: acc && acc.w + 'x' + acc.h, frames, h: view.h, a: view.a, minH }),
+    state: () => ({ iterCap, heavyCost, gpuRate, fitting: order.filter(fits).length, of: order.length, endRest, ended, restWhy, restRate, rest: restHolding ? (restWaiting ? 'settling' : 'ending') : '', restFor: restHolding ? +(performance.now() / 1000 - restAt).toFixed(1) : 0, fade, leaving, step, scale: steps()[step][0], still, refining, refN, refMix, bands, bandMs, frameInt, refDuty, refScale: refScaleNow(), acc: acc && acc.w + 'x' + acc.h, frames, h: view.h, a: view.a, minH }),
   };
 
   canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); cur = null; });

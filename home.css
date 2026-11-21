@@ -62,6 +62,7 @@ body:not(.gems) .hero-text .stage { background: #93b4c9; }
 .live-say.on { opacity: 1; }
 .hero-controls button .glyph { text-shadow: 0 1px 4px rgba(0,0,0,.8); }
 .hero-controls button .die { width: 24px; height: 24px; display: block; margin: auto; filter: drop-shadow(0 1px 3px rgba(0,0,0,.8)); }
+.hero-controls button .glyph.iters { font-size: 12px; font-weight: 600; letter-spacing: -.02em; }
 .hero-controls button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 body:not(.gems) .hero-controls button { background: rgba(30,26,34,.75); }
 .live-note { margin: 1.1rem 0 0;   /* in the hero text's flow, so a two-line tagline pushes it down rather than over it */
