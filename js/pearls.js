@@ -383,18 +383,29 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
 
   function sh(type, src) {
     const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
-    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.warn(gl.getShaderInfoLog(s));
     return s;
   }
+  // Compiled in the background where the browser can (KHR_parallel_shader_compile): asking for
+  // its status at once made the page's first frame wait ~0.3 s for it, just as the live hero's
+  // fractal was starting too (Dan: sluggish to load). Until it's ready the pebbles show as CSS.
   const prog = gl.createProgram();
+  const fs = sh(gl.FRAGMENT_SHADER, FS);
   gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS));
-  gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
+  gl.attachShader(prog, fs);
   gl.bindAttribLocation(prog, 0, 'aPos');
   gl.linkProgram(prog);
-  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { document.body.classList.add('no-gems'); canvas.remove(); return; }
-  document.body.classList.add('gems');
+  const parallel = gl.getExtension('KHR_parallel_shader_compile');
+  let ready = false;
   const U = {};
-  for (const n of ['uRes', 'uTime', 'uDpr', 'uCount', 'uRect', 'uKind', 'uMore']) U[n] = gl.getUniformLocation(prog, n);
+  function checkReady() {
+    if (parallel && !gl.getProgramParameter(prog, parallel.COMPLETION_STATUS_KHR)) return false;
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      console.warn(gl.getShaderInfoLog(fs)); document.body.classList.add('no-gems'); canvas.remove(); return false;
+    }
+    for (const n of ['uRes', 'uTime', 'uDpr', 'uCount', 'uRect', 'uKind', 'uMore']) U[n] = gl.getUniformLocation(prog, n);
+    document.body.classList.add('gems');
+    return (ready = true);
+  }
   const buf = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, buf);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
@@ -412,6 +423,7 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
 
   let prev = performance.now();
   function frame(now) {
+    if (!ready && !checkReady()) { if (canvas.isConnected) requestAnimationFrame(frame); return; }
     requestAnimationFrame(frame);
     const dt = Math.min((now - prev) / 1000, 0.1); prev = now;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -462,7 +474,20 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    // Only round each one, as far as FS looks (its rect and `marg`): a full-screen pass, every
+    // pixel looping over every gem, cost the whole page's GPU every frame for a few small shapes.
+    // (Where boxes overlap, FS works out the same colour twice.)
+    gl.enable(gl.SCISSOR_TEST);
+    const marg = 16 * dpr + 2;
+    for (let i = 0; i < n; i++) {
+      const cx = rects[i * 4], cy = rects[i * 4 + 1], hw = rects[i * 4 + 2] + marg, hh = rects[i * 4 + 3] + marg;
+      const x0 = Math.max(0, Math.floor(cx - hw)), x1 = Math.min(W, Math.ceil(cx + hw));
+      const y0 = Math.max(0, Math.floor(H - (cy + hh))), y1 = Math.min(H, Math.ceil(H - (cy - hh)));
+      if (x1 <= x0 || y1 <= y0) continue;
+      gl.scissor(x0, y0, x1 - x0, y1 - y0);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }
+    gl.disable(gl.SCISSOR_TEST);
   }
   requestAnimationFrame(frame);
 })();

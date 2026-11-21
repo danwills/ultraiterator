@@ -202,6 +202,7 @@ void main() {
   // in that order, and each fractal's dive (its steering's picks, rests and turn) is seeded by the
   // day and the fractal. They drift apart from there with each machine's speed (its rests last as
   // long as it takes to refine), but each fractal's dive begins the same everywhere.
+  const FIRST_GLSL_MAX = 10000;   // bytes: the page's first fractal's shader at most (17 of 63)
   const SLOT = 120;            // seconds of the day a fractal, for where it starts
   const DAY = Math.floor(Date.now() / 864e5);
   function seeded(n) {   // mulberry32
@@ -443,6 +444,11 @@ void main() {
   // (starting: a begin is waiting for its fractal; frames meanwhile mustn't start more. They had,
   // one a frame, each the next along, compiling several at once: black for ages between fractals.)
   let starting = false, beganAt = 0, queued = null;
+  // The next fractal's compiled while this one rests (or is paused), the view still: a compile
+  // takes 0.2-4 s, and the browser's GPU stalls meanwhile (frames of up to half a second here),
+  // so compiling as each one began made its start sluggish (Dan). (One not ready by the end is
+  // waited for, its render showing.)
+  const loadNext = () => { if (order.length) load(order[(at + 1) % order.length]).catch(() => {}); };
   const WAIT_SHOW = 0.4;   // s of waiting before the render's shown   // (queued: a show() that came while starting)
   async function begin(i) {
     if (starting) return;
@@ -452,11 +458,12 @@ void main() {
     rand = seeded(hashStr(DAY + ':' + pick.id)); turnPh = rand() * 6.283; turnT = 0;   // (this dive's own, the same everywhere)
     // A slow compile (a shader not ready yet, ~10 s for some): its 2k render shows meanwhile, not
     // black, and the live one cross-fades in over it once it's ready.
+    const first = !cur;   // (the page's very first: its render shows straight away, the GPU's busiest then)
     const waitT = setTimeout(() => {
       if (!starting) return;
       if (poster) { poster.style.backgroundImage = 'url(live/' + pick.id + '.webp)'; poster.classList.remove('gone'); }
       document.body.classList.add('waiting');
-    }, WAIT_SHOW * 1000);
+    }, first ? 0 : WAIT_SHOW * 1000);
     let next;
     try { next = await load(pick); }
     catch (e) { console.warn('live: ' + pick.id + ' did not compile', e); order.splice(at, 1); starting = false; if (order.length) begin(at); return; }
@@ -464,6 +471,7 @@ void main() {
     clearTimeout(waitT);
     if (queued !== null) { const q = queued; queued = null; begin(q); return; }
     cur = next; beganAt = performance.now() / 1000;
+    if (PIN_STEP === null) { step = startStep(pick); ceiling = 99; frameTimes = []; }
     showName(pick);
     // The whole 2k to start with, then in until fp32 runs out (its depth past the 2k).
     startH = 1.0;
@@ -479,7 +487,7 @@ void main() {
     holdUntil = -1e9; movedT = 0; nextRest = restIn() / 4; settleAt = null; restHolding = false; restWaiting = false; endRest = false; ended = false;
     fade = 0; fadeDir = 1; leaving = false; frames = 0; still = 0; prevView = null; stopRefine(); refMix = 0;
     if (document.body.classList.contains('waiting')) fade = 1;   // (the canvas's own opacity does the cross-fade)
-    load(order[(at + 1) % order.length]).catch(() => {});   // the next one compiles meanwhile
+    // (The next one compiles at this one's first rest: loadNext.)
   }
 
   function quadDraw(w, h) {
@@ -594,7 +602,32 @@ void main() {
   const MOVE_SLOW = 1 / 12, MOVE_UP = 1 / 20;
   const maxScale = () => Math.min(window.devicePixelRatio || 1, 1.5);
   const steps = () => LADDER.filter(s => s[0] <= maxScale() + 1e-6);
-  let step = PIN_STEP ?? 4, ceiling = 99, ceilingUntil = 0, ceilingFor = 15, frameTimes = [];
+  let step = PIN_STEP ?? 1, ceiling = 99, ceilingUntil = 0, ceilingFor = 15, frameTimes = [];
+  // Each fractal starts on the step this machine can draw it at (Dan: sluggish at the start, fine
+  // once it's going: it started at step 4 whatever the fractal and took seconds of 0.3-0.8 s frames
+  // to come down; and a heavy fractal after a light one began where the light one had got to).
+  // gpuRate is what this machine's done: work a second, work being samples x 32 / the fractal's
+  // rows (picks.json: rows of a tile a frame, timed against Alan's 32, so 1/rows is its cost), kept
+  // in this browser between visits. Unknown, it's a slow GPU's (GPU_RATE_GUESS).
+  const GPU_KEY = 'ultraiterator-gpu-rate', GPU_RATE_GUESS = 4e6, START_FPS = 40;   // (40: a dive's start is usually its cheapest view, so it aims high)
+  let gpuRate = GPU_RATE_GUESS;
+  try { const v = parseFloat(localStorage.getItem(GPU_KEY)); if (v > 0) gpuRate = v; } catch (e) {}
+  const workOf = (px, aa, pick) => px * aa * aa * 32 / Math.max(1, (pick && pick.rows) || 8);
+  function startStep(pick) {
+    const r = canvas.getBoundingClientRect(), all = steps();
+    for (let i = all.length - 1; i > 0; i--) {
+      const [sc, aa] = all[i];
+      if (workOf(r.width * r.height * sc * sc * 1.1, aa, pick) * START_FPS <= gpuRate) return i;
+    }
+    return 0;
+  }
+  function noteRate(med) {
+    if (!sampled || !cur) return;
+    const rate = workOf(sampled.w * sampled.h, steps()[step][1], cur.pick) / med;
+    // (Frames held to the display's rate say only that it's at least this fast.)
+    gpuRate = med < 0.022 ? Math.max(gpuRate, rate) : gpuRate * 0.7 + rate * 0.3;
+    try { localStorage.setItem(GPU_KEY, String(Math.round(gpuRate))); } catch (e) {}
+  }
   function adapt(dt, now) {
     if (refining) { frameTimes = []; return; }   // (slow frames are fine while still)
     frameTimes.push(dt);
@@ -604,6 +637,7 @@ void main() {
     frameTimes.sort((a, b) => a - b);
     const med = frameTimes[frameTimes.length >> 1];
     baseFrame = med;   // (refinement's frame-rate watch compares against this)
+    noteRate(med);
     frameTimes = [];
     if (med > TOO_SLOW && step === 0) { giveUp(); return; }
     if (med > TOO_SLOW * 2) { step = 0; ceiling = 0; ceilingUntil = now + 600; return; }   // hopeless: straight to the bottom
@@ -975,7 +1009,7 @@ void main() {
           restWaiting = canRefine && TAA; restAt = now; settleRead = null; settleReads = 0;
           settleAt = null; holdUntil = now + (restWaiting ? (endRest ? END_MAX : REST_MAX) : REST_HOLD); holdLen = restWaiting ? (endRest ? END_MAX : REST_MAX) : REST_HOLD; movedT = 0; nextRest = restIn();
           steerT = 0; easeFor = REST_RESUME; vel = { x: 0, y: 0 }; target = { x: view.x, y: view.y }; aim = { ...target };
-          restEase = 0; restHolding = true; say('resting and refining');
+          restEase = 0; restHolding = true; say('resting and refining'); loadNext();
         }
       }
       const ease = smooth(0, easeFor, steerT) * (0.25 + 0.75 * smooth(minH, minH * 6, view.h)) * restEase;
@@ -1142,7 +1176,7 @@ void main() {
       if (i >= 0 && !(cur && cur.pick.id === id)) { if (starting) queued = i; else begin(i); }
     },
     // Play: off at once (no wait after a touch), up to speed in a second or so.
-    togglePause() { paused = !paused; restHolding = false; restWaiting = false; endRest = false; if (ended) { ended = false; leaving = false; fadeDir = 1; } if (!paused) { steerT = 0; easeFor = 1.2; holdUntil = -1e9; settleAt = null; movedT = 0; } return paused; },
+    togglePause() { paused = !paused; if (paused) loadNext(); restHolding = false; restWaiting = false; endRest = false; if (ended) { ended = false; leaving = false; fadeDir = 1; } if (!paused) { steerT = 0; easeFor = 1.2; holdUntil = -1e9; settleAt = null; movedT = 0; } return paused; },
     state: () => ({ endRest, ended, restWhy, restRate, rest: restHolding ? (restWaiting ? 'settling' : 'ending') : '', restFor: restHolding ? +(performance.now() / 1000 - restAt).toFixed(1) : 0, fade, leaving, step, scale: steps()[step][0], still, refining, refN, refMix, bands, bandMs, frameInt, refDuty, refScale: refScaleNow(), acc: acc && acc.w + 'x' + acc.h, frames, h: view.h, a: view.a, minH }),
   };
 
@@ -1158,6 +1192,11 @@ void main() {
     for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
     const slot = Math.floor((Date.now() % 864e5) / 1000 / SLOT) % order.length;
     order = order.slice(slot).concat(order.slice(0, slot));
+    // ...starting on the first from there with a small shader: the page's first compile stalls
+    // its GPU (0.2-4 s, by the shader's size), as the page itself is loading. (Picked from the
+    // shared order, so everyone opening it at once still starts on the same one.)
+    const light = order.findIndex(p => (p.glsl || 0) < FIRST_GLSL_MAX);
+    if (light > 0) order = order.slice(light).concat(order.slice(0, light));
     // ?pick=<id or the start of its name>: start with that one.
     const want = (wanted || new URLSearchParams(location.search).get('pick') || '').toLowerCase();
     const first = want ? order.findIndex(p => p.id.startsWith(want) || p.name.toLowerCase().startsWith(want)) : -1;
