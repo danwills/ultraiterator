@@ -1141,7 +1141,7 @@ void main() {
     const mode = paused ? 'paused' : half ? 'half' : 'playing';
     if (mode !== shownMode) {
       shownMode = mode;
-      if (pauseGlyph) pauseGlyph.textContent = mode === 'paused' ? '▶' : mode === 'half' ? '' : '❚❚';
+      if (pauseGlyph) { pauseGlyph.textContent = mode === 'paused' ? '▶' : ''; pauseGlyph.classList.toggle('bars', mode === 'playing'); }   // (bars: home.css)
       const label = mode === 'paused' ? 'Play' : mode === 'half' ? 'Keep it paused' : 'Pause';
       pausePearl.setAttribute('aria-label', label);
       pausePearl.title = mode === 'paused' ? 'Carry on the dive' : mode === 'half' ? 'Keep it paused (it carries on by itself soon)' : 'Pause the dive';

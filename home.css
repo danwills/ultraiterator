@@ -63,6 +63,12 @@ body:not(.gems) .hero-text .stage { background: #93b4c9; }
 .hero-controls button .glyph { text-shadow: 0 1px 4px rgba(0,0,0,.8); }
 .hero-controls button .die { width: 24px; height: 24px; display: block; margin: auto; filter: drop-shadow(0 1px 3px rgba(0,0,0,.8)); }
 .hero-controls button .glyph.iters { font-size: 12px; font-weight: 600; letter-spacing: -.02em; }
+/* The pause bars, drawn rather than the font's ❚❚ (whose ink sat off the middle): the same as the
+   pearl's hollow ones (js/pearls.js), at ±0.2 of its radius, 0.17 wide and 0.6 tall. */
+#pause-pearl { position: relative; }
+#pause-pearl .glyph.bars { position: absolute; left: 50%; top: 50%; width: 28.5%; height: 30%; transform: translate(-50%, -50%);
+  background: linear-gradient(90deg, currentColor 0 29.8%, transparent 29.8% 70.2%, currentColor 70.2%);
+  filter: drop-shadow(0 1px 3px rgba(0,0,0,.8)); }
 #iters-pearl { -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; touch-action: manipulation; }
 .hero-controls button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 body:not(.gems) .hero-controls button { background: rgba(30,26,34,.75); }
