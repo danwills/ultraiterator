@@ -341,13 +341,29 @@ void main() {
   // the limit both collapse to the same flat colour, and chaotic ones differ at any depth.)
   const PRECISION_ULPS = 16;
   const ulp32 = x => 2 ** (Math.floor(Math.log2(Math.max(Math.abs(x), 1e-30))) - 23);
-  const mapsOf = src => [...src.matchAll(/const vec2 C\d+ = vec2\(([^,]+), ([^)]+)\), R\d+ = vec2\(([^,]+), ([^)]+)\)/g)]
-    .map(m => ({ cx: +m[1], cy: +m[2], r: Math.hypot(+m[3], +m[4]) }));
+  const mapsOf = src => { const off = slopeOffsets(src); return [...src.matchAll(/const vec2 C(\d+) = vec2\(([^,]+), ([^)]+)\), R\d+ = vec2\(([^,]+), ([^)]+)\)/g)]
+    .map(m => ({ cx: +m[2], cy: +m[3], r: Math.hypot(+m[4], +m[5]), off: off[m[1]] || 0 })); };
+  // A slope layer lit from three orbits a fixed offset apart in c (sdc-slope-blend's, uprPort):
+  // with a pixel under the offset its light is a slope across pixels, blurred, and blocky as the
+  // offset nears fp32's steps. So its pixel stays at least the offset. (Its normal's last term
+  // is -offset. None on the site yet, 20 in the app; SlopeMandel's is exact, from dz/dc, and its
+  // grain looks right at the general limit, smeared only at a quarter of it.)
+  const slopeOffsets = src => {
+    const out = {};
+    for (const part of src.split(/(?=vec3 colourAt\d+\()/)) {
+      const k = /^vec3 colourAt(\d+)\(/.exec(part), m = /normalize\(vec3\([^,]+ \* \(f_e2 - f_e1\), [^,]+ \* \(f_e3 - f_e1\), (-?[0-9.e+-]+)\)\)/.exec(part);
+      if (k && m) out[k[1]] = Math.abs(+m[1]);
+    }
+    return out;
+  };
   // The least height for a view reaching rho (picture heights) from the 2k's middle.
   function floorH(maps, rho, screenPx) {
     let need = 0;
-    for (const m of maps) if (m.r > 0) need = Math.max(need, ulp32(Math.max(Math.abs(m.cx), Math.abs(m.cy)) + m.r * rho) / m.r + ulp32(rho));
-    return need * PRECISION_ULPS * screenPx;
+    for (const m of maps) if (m.r > 0) {
+      need = Math.max(need, (ulp32(Math.max(Math.abs(m.cx), Math.abs(m.cy)) + m.r * rho) / m.r + ulp32(rho)) * PRECISION_ULPS);
+      if (m.off) need = Math.max(need, m.off / m.r);   // (a slope layer's pixel, at least its offset)
+    }
+    return need * screenPx;
   }
   const TAA = new URLSearchParams(location.search).get('taa') !== '0';   // ?taa=0: no blending, to compare
   const PIN_STEP = new URLSearchParams(location.search).has('step') ? +new URLSearchParams(location.search).get('step') : null;   // ?step=n: hold the ladder there, to compare
