@@ -1113,6 +1113,9 @@ void main() {
   function giveUp() {
     cur = null; if (window.UIGemsBackdrop) window.UIGemsBackdrop(null);
     document.body.classList.add('no-live');
+    // (the one it's on now: after a lost GPU every pick came here, and the poster stayed on the
+    // first one's render whichever was picked, Dan)
+    if (poster && order[at]) poster.style.backgroundImage = 'url(live/' + order[at].id + '.webp)';
     if (poster) poster.classList.remove('gone');
     const note = document.querySelector('.live-note');
     if (note && order[at]) note.innerHTML = 'One of the fractals, as rendered in Ultra Fractal. (This browser is a bit slow to draw it live.)<br><span id="live-name"></span>';
@@ -1453,6 +1456,9 @@ void main() {
     // Straight to that one (the gallery's full-tab view), from its start.
     show(id) {
       wanted = id;
+      // The GPU back after a loss (webglcontextrestored): everything made on it is gone, so the
+      // page starts again, straight into this one (js/theatre.js opens #live-<id>).
+      if (glRestored) { history.replaceState(null, '', location.pathname + location.search + '#live-' + id); location.reload(); return; }
       if (!order.length) return;   // (still loading: it starts with it)
       const i = order.findIndex(p => p.id === id);
       if (i >= 0 && !(cur && cur.pick.id === id)) {
@@ -1490,6 +1496,12 @@ void main() {
   // sad face; Dan saw it): the fractal's own render instead, as giveUp, and the one it was drawing
   // is noted as too heavy here (tooHeavy), so it and any as heavy are passed over next time.
   { const el = document.getElementById('iters-pearl'); if (el) itersGestures(el); }
+  let glRestored = false;
+  canvas.addEventListener('webglcontextrestored', () => {
+    glRestored = true;
+    // (In the full-tab view the fractal is the page: back to it now. Otherwise at the next pick.)
+    if (document.body.classList.contains('theatre') && /^#live-[0-9a-f]+$/.test(location.hash)) location.reload();
+  });
   canvas.addEventListener('webglcontextlost', e => {
     e.preventDefault();
     const pick = cur ? cur.pick : order[at];
