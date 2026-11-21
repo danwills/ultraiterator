@@ -685,7 +685,31 @@ void main() {
   // The iterations pearl (for now, to try it: Dan, "in some cases it could still look good"):
   // each layer's iterations x iterCap. The colourings mostly sum over every iteration, so nearly
   // all of them change colour, some a lot (measured: 3 of 63 look the same at half).
-  const ITER_STEPS = [1, 0.7, 0.5, 0.35, 0.25, 0.17, 0.12, 0.08, 0.05];
+  const ITER_STEPS = [1, 0.7, 0.5, 0.35, 0.25, 0.17, 0.12, 0.08, 0.05], ITER_MIN = 1 / 128;
+  // Its gestures (Dan): a click a step fewer, Shift or a right click a step more, a double click
+  // halves it, a long press puts it back to full. A click waits out the double click's time, so
+  // a double's two clicks aren't two steps as well; and a touch's long press, which browsers also
+  // count as a right click, is the long press only.
+  const LONG_PRESS = 0.5, DOUBLE_CLICK = 0.28;
+  function itersGestures(el) {
+    let pressT = null, longDone = false, clickT = null, touch = false;
+    const act = d => window.UILive && UILive.iters(d);
+    el.addEventListener('pointerdown', e => {
+      touch = e.pointerType !== 'mouse'; longDone = false;
+      if (e.button !== 0) return;
+      clearTimeout(pressT);
+      pressT = setTimeout(() => { longDone = true; act('full'); }, LONG_PRESS * 1000);
+    });
+    const unpress = () => clearTimeout(pressT);
+    el.addEventListener('pointerup', unpress); el.addEventListener('pointerleave', unpress); el.addEventListener('pointercancel', unpress);
+    el.addEventListener('click', e => {
+      if (longDone) { longDone = false; return; }
+      if (e.shiftKey) { act(1); return; }
+      if (clickT) { clearTimeout(clickT); clickT = null; act('half'); return; }
+      clickT = setTimeout(() => { clickT = null; act(-1); }, DOUBLE_CLICK * 1000);
+    });
+    el.addEventListener('contextmenu', e => { e.preventDefault(); if (!touch) act(1); });
+  }
   let iterCap = 1;
   // Fractals too heavy for this machine are passed over (Dan: "rather that than it being insanely
   // slow on lesser computers or phones"). Seen, not predicted: one that's at the ladder's lowest
@@ -1295,15 +1319,19 @@ void main() {
     },
     // Play: off at once (no wait after a touch), up to speed in a second or so.
     capSource,   // (for tests)
-    // The iterations pearl: down a step (up, with Shift or a right click), round again past the ends.
+    // The iterations pearl: down a step (up, with Shift or a right click), round again past the
+    // ends; 'half' halves it (to ITER_MIN at the least), 'full' puts it back. (From a halving, off
+    // the steps, a step goes to the next one along.)
     iters(dir) {
-      const i = ITER_STEPS.indexOf(iterCap);
-      iterCap = ITER_STEPS[(i + (dir < 0 ? 1 : -1) + ITER_STEPS.length) % ITER_STEPS.length];   // (the list runs most to fewest)
+      if (dir === 'full') iterCap = 1;
+      else if (dir === 'half') iterCap = Math.max(ITER_MIN, iterCap / 2);
+      else if (dir < 0) iterCap = ITER_STEPS.find(v => v < iterCap - 1e-9) ?? ITER_STEPS[0];   // (the list runs most to fewest)
+      else iterCap = [...ITER_STEPS].reverse().find(v => v > iterCap + 1e-9) ?? ITER_STEPS[ITER_STEPS.length - 1];
       // (Begun again from here: no history or refinement from the old count.)
       frames = 0; still = 0; prevView = null; stopRefine(); refMix = 0;
-      const pct = Math.round(iterCap * 100) + '%';
+      const pct = (iterCap >= 0.1 ? Math.round(iterCap * 100) : +(iterCap * 100).toFixed(1)) + '%';
       const el = document.getElementById('iters-pearl');
-      if (el) { el.querySelector('.glyph').textContent = pct; el.title = 'Iterations: ' + pct + ' (click for fewer, Shift-click for more)'; }
+      if (el) { el.querySelector('.glyph').textContent = pct; el.title = el.title.replace(/^Iterations: [^ ]+/, 'Iterations: ' + pct); }
       say('iterations ' + pct);
       return iterCap;
     },
@@ -1314,6 +1342,7 @@ void main() {
   // The GPU lost (a draw that ran too long gets the GPU reset, Chrome showing a white canvas with a
   // sad face; Dan saw it): the fractal's own render instead, as giveUp, and the one it was drawing
   // is noted as too heavy here (tooHeavy), so it and any as heavy are passed over next time.
+  { const el = document.getElementById('iters-pearl'); if (el) itersGestures(el); }
   canvas.addEventListener('webglcontextlost', e => {
     e.preventDefault();
     const pick = cur ? cur.pick : order[at];
