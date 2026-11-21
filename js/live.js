@@ -167,14 +167,19 @@ void main() {
     vec2 o = uView.xy + uiTurn(uRot, (f - 0.5 * uRes) * (uView.z / uRes.y));
     // The blend, where its view was (it waits while refining, as the view turns on in a rest).
     vec2 hq = uiTurn(uHistRot * vec2(1.0, -1.0), o - uHistView.xy) / uHistView.z;
-    vec3 c = blendAt(vec2(hq.x * uHistRes.y / uHistRes.x, hq.y) + 0.5);
+    vec2 hu = vec2(hq.x * uHistRes.y / uHistRes.x, hq.y) + 0.5;
+    vec3 c = blendAt(hu);
+    // Past the blend's edge (it waits while the view turns on in a rest, and runs out at the rim
+    // within a second or so) it's only its edge pixels stretched: streaks (Dan). There the
+    // refinement's own picture alone, once it has a sample.
+    bool off = any(lessThan(hu, vec2(0.0))) || any(greaterThan(hu, vec2(1.0)));
     if (uRefMix > 0.0) {
         vec2 pf = uiTurn(uRefRot * vec2(1.0, -1.0), o - uRefView.xy) * (uAccRes.y / uRefView.z) + 0.5 * uAccRes;
         if (all(greaterThanEqual(pf, vec2(0.0))) && all(lessThan(pf, uAccRes))) {
             vec4 a = accAt(pf);
             // From the first sample on: the moving view's picture, worth uSeed samples, and the
             // refinement's, so it improves at once and smoothly takes over.
-            c = mix(c, (c * uSeed + a.rgb) / (uSeed + a.a), uRefMix);
+            c = off && a.a > 0.0 ? a.rgb / a.a : mix(c, (c * uSeed + a.rgb) / (uSeed + a.a), uRefMix);
         }
     }
     // A slight vignette: corners down to ~70%, the middle untouched.
@@ -815,7 +820,7 @@ void main() {
   // round: a blend's edge pixels have the least history (things come in there, reprojected from
   // nowhere) and sparkled, so they're drawn but kept just off the screen. ov(v): v as the samples
   // see it; histOver, the blend's own margin.
-  const HIST_MARGIN = 0.03, UP_MAX = 4;
+  const HIST_MARGIN = 0.05, UP_MAX = 4;   // (was 0.03: streaks came in at the edges, Dan)
   let histOver = 1, curOver = 1;
   const ov = v => ({ ...v, h: v.h * curOver });
   function resize() {
@@ -935,8 +940,21 @@ void main() {
     return true;
   }
 
+  // (For tests: frames where a corner read past the buffer it reads, by which.)
+  const edgeMiss = { show: 0, blend: 0, bake: 0 };
+  // Is the rect (half sizes hw, hh, in plane units, about view v) inside buffer view bv (height bh, aspect asp)?
+  function covers(v, hw, hh, bv, bh, asp) {
+    const ca = Math.cos(v.a), sa = Math.sin(v.a), cb = Math.cos(bv.a), sb = Math.sin(bv.a);
+    for (const [ex, ey] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      const ox = v.x + ca * ex * hw - sa * ey * hh - bv.x, oy = v.y + sa * ex * hw + ca * ey * hh - bv.y;
+      const qx = (cb * ox + sb * oy) / bh, qy = (-sb * ox + cb * oy) / bh;
+      if (Math.abs(qx) > asp / 2 + 1e-6 || Math.abs(qy) > 0.5 + 1e-6) return false;
+    }
+    return true;
+  }
   function bakeRefined() {
     const t = hist[histAt];
+    if (!covers(view, view.h * histOver * t.w / t.h / 2, view.h * histOver / 2, refView, refView.h, acc.w / acc.h)) edgeMiss.bake++;
     gl.bindFramebuffer(gl.FRAMEBUFFER, t.fb);
     gl.useProgram(bake);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, acc.tex);
@@ -951,7 +969,12 @@ void main() {
   function startRefine() {
     const r = canvas.getBoundingClientRect();
     const s = refScaleNow();
-    let w = Math.max(16, Math.round(r.width * s)), h = Math.max(16, Math.round(r.height * s));
+    const hs = Math.max(16, Math.round(r.height * s));
+    // Out past the screen as far as the moving view's buffer goes (HIST_MARGIN, and a little
+    // more), so baking it into that (bakeRefined) never reads past its edge: that smeared the
+    // edge's pixels into the margin, and they streaked in as the view moved on (Dan).
+    const pad = 1 + 2 * (HIST_MARGIN + 0.01);
+    let w = Math.ceil(Math.max(16, Math.round(r.width * s)) * pad), h = Math.ceil(hs * pad);
     // In a rest the view keeps turning, so it refines a little more all round: enough for the turn
     // the rest of the hold will make (worked out ahead, the noise being known), and the screen just
     // reads it turned. ~14° at the most, about half as many pixels again for a wide screen. It
@@ -972,12 +995,12 @@ void main() {
       ang = Math.min(0.5, ang * 1.15 + 0.004); go = Math.min(go * 1.15 + 0.002, ang * 0.75);
     }
     refTurns = ang > 0; refAng = ang; refAngGo = go;
-    const c = Math.cos(ang), sn = Math.sin(ang), h0 = h;
+    const c = Math.cos(ang), sn = Math.sin(ang);
     [w, h] = [Math.ceil(w * c + h * sn), Math.ceil(w * sn + h * c)];
     if (!acc || acc.w !== w || acc.h !== h) { if (acc) acc.free(); acc = target2d(w, h, gl.RGBA32F); }
     gl.bindFramebuffer(gl.FRAMEBUFFER, acc.fb);
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
-    refN = 0; refView = { ...view, h: view.h * h / h0 }; refining = true; refStartT = performance.now() / 1000; band = 0; refRest = 0; bandMs = 0;
+    refN = 0; refView = { ...view, h: view.h * h / hs }; refining = true; refStartT = performance.now() / 1000; band = 0; refRest = 0; bandMs = 0;
     // The first pass in bands already, sized from the moving view's frames scaled by the pixels:
     // as one band, a heavy fractal's first sample at a phone's whole CSS-pixel size held its GPU
     // for seconds (no timer there to learn from first), and the page went black and wouldn't
@@ -1088,6 +1111,9 @@ void main() {
     gl.uniform2f(SU.uRot, Math.cos(view.a), Math.sin(view.a));
     gl.uniform2f(SU.uRefRot, Math.cos(rv.a), Math.sin(rv.a));
     const hv = prevView || view;   // (the blend's view: renderTaa's last)
+    { const hw = view.h * w / h / 2, hh = view.h / 2;
+      if (acc && refMix > 0 && refining && !covers(view, hw, hh, rv, rv.h, acc.w / acc.h)) edgeMiss.show++;
+      if (!(acc && refMix > 0 && refN > 0) && !covers(view, hw, hh, hv, hv.h * histOver, hist[histAt].w / hist[histAt].h)) edgeMiss.blend++; }
     gl.uniform3f(SU.uHistView, hv.x, hv.y, hv.h * histOver);
     gl.uniform2f(SU.uHistRes, hist[histAt].w, hist[histAt].h);
     gl.uniform2f(SU.uHistRot, Math.cos(hv.a), Math.sin(hv.a));
@@ -1238,7 +1264,11 @@ void main() {
     if (!wantRefine && refining) { if (refTurns && refN >= REF_SEED) bakeRefined(); stopRefine(); }
     if (refining) {
       if (restWaiting && restHolding && !paused) watchSettle(now);
-      if (!refineTick(now, raw) && !refTurns) return;   // nothing new: the canvas keeps its picture (unless it turns)
+      const got = refineTick(now, raw);
+      // Till its first sample (seconds, for a heavy one) the moving view keeps drawing: the blend
+      // waiting meanwhile while the view turned on ran out at the edges, streaking (Dan).
+      if (refN === 0 && refining) renderTaa();
+      else if (!got && !refTurns) return;   // nothing new: the canvas keeps its picture (unless it turns)
       // Faded in over REF_IN s: switched on in one frame, its sharper picture popped (measured: a
       // frame-to-frame change 4x the settling motion's).
       refMix = Math.min(1, (now - refStartT) / REF_IN);
@@ -1400,7 +1430,7 @@ void main() {
       return iterCap;
     },
     togglePause() { paused = !paused; if (paused) loadNext(); restHolding = false; restWaiting = false; endRest = false; if (ended) { ended = false; leaving = false; fadeDir = 1; } if (!paused) { steerT = 0; easeFor = 1.2; holdUntil = -1e9; settleAt = null; movedT = 0; } return paused; },
-    state: () => ({ iterCap, heavyCost, gpuRate, fitting: order.filter(fits).length, of: order.length, endRest, ended, restWhy, restRate, rest: restHolding ? (restWaiting ? 'settling' : 'ending') : '', restFor: restHolding ? +(performance.now() / 1000 - restAt).toFixed(1) : 0, fade, leaving, step, scale: steps()[step][0], still, refining, refN, refMix, bands, bandMs, frameInt, refDuty, refScale: refScaleNow(), acc: acc && acc.w + "x" + acc.h, frames, h: view.h, a: view.a, minH, refAng, refAngGo, refA: refView ? refView.a : null, picRho }),
+    state: () => ({ iterCap, heavyCost, gpuRate, fitting: order.filter(fits).length, of: order.length, endRest, ended, restWhy, restRate, rest: restHolding ? (restWaiting ? 'settling' : 'ending') : '', restFor: restHolding ? +(performance.now() / 1000 - restAt).toFixed(1) : 0, fade, leaving, step, scale: steps()[step][0], still, refining, refN, refMix, bands, bandMs, frameInt, refDuty, refScale: refScaleNow(), acc: acc && acc.w + "x" + acc.h, frames, h: view.h, a: view.a, minH, refAng, refAngGo, refA: refView ? refView.a : null, picRho, edgeMiss: { ...edgeMiss } }),
   };
 
   // The GPU lost (a draw that ran too long gets the GPU reset, Chrome showing a white canvas with a
