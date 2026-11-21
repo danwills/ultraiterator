@@ -253,7 +253,7 @@ void main() {
   // by hand it went straight into a rest: the time since the last rest had kept counting).
   const REST_MOVE_FIRST = 4;
   const SETTLE_PX = 48;
-  let restWhy = '', restRate = 0, restWaiting = false, restAt = 0, settleRead = null, settleReadAt = 0, settleReadN = 0, settleReads = 0, rateKnown = false, refAng = 0, refAngGo = 0;
+  let restWhy = '', restRate = 0, restWaiting = false, restAt = 0, settleRead = null, settleReadAt = 0, settleReadN = 0, settleReads = 0, rateKnown = false, refFirstAt = 0, refAng = 0, refAngGo = 0;
   const settlePx = new Float32Array(SETTLE_PX * SETTLE_PX * 4);
   // The end of its depth always gets a rest (Dan: "heaps of zooms seem to end and go to the next
   // fractal instead of rendering a nice deep-zoom"): it settles there, at END_REST_AT x its least
@@ -264,6 +264,9 @@ void main() {
   // down to (watchFps), doesn't turn (so needs no margin and never runs out of it), and holds till
   // END_MIN_N samples a pixel and settled, or END_MAX s.
   const END_MIN_N = 32, END_MAX = 20;   // (were 64, 60; Dan: the longest rest 20 s)
+  // (The depth's end counts its END_MAX from the refinement's first sample, so a slow start doesn't
+  // cut it short of finishing, Dan; END_HARD at the most however it goes.)
+  const END_HARD = 45;
   const REST_LEAD = 5;         // seconds of moving the pause pearl shows a rest coming (and then its settling)
   // A word under the pause pearl as a rest begins and ends.
   const sayEl = document.getElementById('live-say'), SAY_FOR = 3.5;
@@ -1017,7 +1020,7 @@ void main() {
     if (!acc || acc.w !== w || acc.h !== h) { if (acc) acc.free(); acc = target2d(w, h, gl.RGBA32F); }
     gl.bindFramebuffer(gl.FRAMEBUFFER, acc.fb);
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
-    settleRead = null; settleReads = 0; rateKnown = false;
+    settleRead = null; settleReads = 0; rateKnown = false; refFirstAt = 0;
     refN = 0; refView = { ...view, h: view.h * h / hs }; refining = true; refStartT = performance.now() / 1000; band = 0; refRest = 0; bandMs = 0;
     // The first pass in bands already, sized from the moving view's frames scaled by the pixels:
     // as one band, a heavy fractal's first sample at a phone's whole CSS-pixel size held its GPU
@@ -1102,6 +1105,7 @@ void main() {
     // A pass done: one more sample a pixel. Size the bands for the next, so one fits a frame's share
     // (without the timer, a band known only to the frame: more bands if it took over two).
     band = 0; refN++;
+    if (refN === 1) refFirstAt = performance.now() / 1000;
     if (!bandMs) return;
     const pass = bandMs * bands;
     const want = timer ? Math.min(maxBands(), 2 ** Math.ceil(Math.log2(Math.max(1, pass / Math.min(budget, REF_BAND_MAX_MS)))))
@@ -1282,7 +1286,7 @@ void main() {
         restEase = smooth(REST_SETTLE, 0, now - settleAt);
         if (now - settleAt >= REST_SETTLE) {
           restWaiting = canRefine && TAA; restAt = now; settleRead = null; settleReads = 0;
-          settleAt = null; holdUntil = now + (restWaiting ? (endRest ? END_MAX : REST_MAX) : REST_HOLD); holdLen = restWaiting ? (endRest ? END_MAX : REST_MAX) : REST_HOLD; movedT = 0; nextRest = restIn();
+          settleAt = null; holdUntil = now + (restWaiting ? (endRest ? END_HARD : REST_MAX) : REST_HOLD); holdLen = restWaiting ? (endRest ? END_HARD : REST_MAX) : REST_HOLD; movedT = 0; nextRest = restIn();
           steerT = 0; easeFor = REST_RESUME; vel = { x: 0, y: 0 }; target = { x: view.x, y: view.y }; aim = { ...target };
           restEase = 0; restHolding = true; say('sharpening this view'); loadNext();
         }
@@ -1312,7 +1316,9 @@ void main() {
     if (leaving && fade <= 0) { chosen = false; begin(nextFitting(at)); return; }
     const pv = prevView;
     still = pv && pv.x === view.x && pv.y === view.y && pv.h === view.h ? still + 1 : 0;   // (the turn aside: a rest turns on)
-    const wantRefine = canRefine && TAA && still > STILL_REFINE && fade >= 1;
+    // (and on through a fade out from a still view, the depth's end: stopped as it began fading,
+    // its sharp picture went back to the moving view's softer one as it left, Dan: "teasing")
+    const wantRefine = canRefine && TAA && still > STILL_REFINE && (fade >= 1 || (leaving && refining));
     if (wantRefine && !refining) startRefine();
     if (!wantRefine && refining) { if (refTurns && refN >= REF_SEED) bakeRefined(); stopRefine(); }
     if (refining) {
@@ -1362,7 +1368,7 @@ void main() {
     if (done) restWhy = refN >= REF_MAX ? 'max samples' : 'turned ' + Math.abs(view.a - refView.a).toFixed(3) + ' of ' + refAngGo.toFixed(3);
     if (!done && refN >= (endRest ? END_MIN_N : REST_SAMPLES)) { done = true; restWhy = refN + ' samples'; }
     if (!done && settleReads >= 2 && (!endRest || refN >= END_MIN_N)) { done = true; restWhy = 'settled ' + restRate.toFixed(2); }
-    if (now - restAt > (endRest ? END_MAX : REST_MAX)) { done = true; restWhy = 'max time'; }
+    if (endRest ? now - restAt > END_HARD || (refFirstAt && now - refFirstAt > END_MAX) : now - restAt > REST_MAX) { done = true; restWhy = 'max time'; }
     if (!done) return;
     restWaiting = false;
     holdUntil = Math.max(now + REST_AFTER, restAt + REST_MIN); holdLen = holdUntil - now;
