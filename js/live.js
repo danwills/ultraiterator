@@ -588,7 +588,7 @@ void main() {
     starting = false;
     clearTimeout(waitT);
     if (queued !== null) { const q = queued; queued = null; begin(q); return; }
-    cur = next; beganAt = performance.now() / 1000; refCap = 1e9;
+    cur = next; beganAt = performance.now() / 1000; refCap = 1e9; proved = false; cheapNext = false;
     if (PIN_STEP === null) { step = startStep(pick); ceiling = 99; frameTimes = []; }
     showName(pick);
     // The whole 2k to start with, then in until fp32 runs out (its depth past the 2k).
@@ -797,7 +797,33 @@ void main() {
   let heavyCost = Infinity, chosen = false;   // (the lightest cost seen too heavy; chosen: from the gallery)
   try { const v = parseFloat(localStorage.getItem(HEAVY_KEY)); if (v > 0) heavyCost = v; } catch (e) {}
   const costOf = pick => workOf(1, pick.aa || 1, pick);
-  const fits = pick => iterCap < 1 || costOf(pick) < heavyCost;
+  // And it works up to the heavy ones (Dan, 2026-11-22: a phone got "a bit slow" on a heavy one,
+  // and should start on cheaper ones, and try a cheap one before giving up). The costs go from 1.2
+  // to 64 (picks.json's rows), the cheapest third at most CHEAP_COST. A new browser's first is one
+  // of those, and the order then takes only ones up to PROVE_GROW times the heaviest that's gone
+  // well here (FIT_WINDOW s without being at the ladder's lowest step), kept in this browser.
+  // Too slow even at the lowest step, it moves to a cheap one, and only gives up on a cheap one.
+  const CHEAP_COST = 3.5, PROVE_GROW = 4, PROVEN_KEY = 'ultraiterator-proven';
+  let provenCost = CHEAP_COST, proved = false, cheapNext = false;
+  try { const v = parseFloat(localStorage.getItem(PROVEN_KEY)); if (v > 0) provenCost = Math.max(CHEAP_COST, v); } catch (e) {}
+  const isCheap = pick => costOf(pick) <= CHEAP_COST;
+  const fits = pick => iterCap < 1 || (costOf(pick) < heavyCost && costOf(pick) <= provenCost * PROVE_GROW && (!cheapNext || isCheap(pick)));
+  function prove(now) {
+    if (proved || !cur || iterCap < 1 || step === 0 || now - beganAt < FIT_WINDOW) return;
+    proved = true;
+    if (costOf(cur.pick) <= provenCost) return;
+    provenCost = costOf(cur.pick);
+    try { localStorage.setItem(PROVEN_KEY, String(provenCost)); } catch (e) {}
+  }
+  // Too slow at the lowest step, past FIT_WINDOW (deeper in, where its iterations have grown):
+  // a cheap one next, if this isn't one already (and wasn't picked from the gallery).
+  function swapToCheap() {
+    if (!cur || chosen || isCheap(cur.pick) || !order.some(isCheap)) return false;
+    heavyCost = Math.min(heavyCost, costOf(cur.pick)); provenCost = CHEAP_COST; cheapNext = true;
+    try { localStorage.setItem(HEAVY_KEY, String(heavyCost)); localStorage.setItem(PROVEN_KEY, String(provenCost)); } catch (e) {}
+    console.info('live: ' + cur.pick.id + ' too slow here; on to a cheap one');
+    return true;
+  }
   function tooHeavy(med, now) {
     if (!cur || chosen || iterCap < 1 || step !== 0 || med <= 1 / FIT_FPS || now - beganAt > FIT_WINDOW) return false;
     heavyCost = Math.min(heavyCost, costOf(cur.pick));
@@ -828,8 +854,9 @@ void main() {
     baseFrame = med;   // (refinement's frame-rate watch compares against this)
     noteRate(med);
     frameTimes = [];
-    if (tooHeavy(med, now)) { UILive.next(); return; }
-    if (med > TOO_SLOW && step === 0) { giveUp(); return; }
+    if (tooHeavy(med, now)) { cheapNext = true; UILive.next(); return; }
+    if (med > TOO_SLOW && step === 0) { if (swapToCheap()) UILive.next(); else giveUp(); return; }
+    prove(now);
     if (med > TOO_SLOW * 2) { step = 0; ceiling = 0; ceilingUntil = now + 600; return; }   // hopeless: straight to the bottom
     if (med > 0.15 && step > 1) step--;   // very slow: a step more
     const top = steps().length - 1;
@@ -1554,7 +1581,9 @@ void main() {
     // ...starting on the first from there with a small shader: the page's first compile stalls
     // its GPU (0.2-4 s, by the shader's size), as the page itself is loading. (Picked from the
     // shared order, so everyone opening it at once still starts on the same one.)
-    const light = order.findIndex(p => (p.glsl || 0) < FIRST_GLSL_MAX);
+    // (And a cheap one to draw, CHEAP_COST, unless this browser's shown it can do more.)
+    let light = order.findIndex(p => (p.glsl || 0) < FIRST_GLSL_MAX && costOf(p) <= provenCost);
+    if (light < 0) light = order.findIndex(p => (p.glsl || 0) < FIRST_GLSL_MAX);
     if (light > 0) order = order.slice(light).concat(order.slice(0, light));
     // ?pick=<id or the start of its name>: start with that one.
     const want = (wanted || new URLSearchParams(location.search).get('pick') || '').toLowerCase();
