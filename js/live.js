@@ -514,6 +514,18 @@ void main() {
     return out + src.slice(i);
   }
   const SLOW = +(new URLSearchParams(location.search).get('slow') || 0);
+  // A pixel drawn with a new program as soon as it's linked: a phone's driver (Dan's S22) finished
+  // compiling only at its first draw, whatever KHR_parallel_shader_compile said, so the fade-in
+  // stalled 1.5-2 s. Now that's here, at the rest it's loaded in (the view still), instead.
+  const warmT = target2d(1, 1, gl.RGBA8);
+  function warm(prog) {
+    if (gl.isContextLost()) return;
+    const fb = gl.getParameter(gl.FRAMEBUFFER_BINDING), vp = gl.getParameter(gl.VIEWPORT), was = gl.getParameter(gl.CURRENT_PROGRAM);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, warmT.fb);
+    gl.useProgram(prog);
+    quadDraw(1, 1);
+    gl.useProgram(was); gl.bindFramebuffer(gl.FRAMEBUFFER, fb); gl.viewport(vp[0], vp[1], vp[2], vp[3]);
+  }
   const loaded = new Map();
   function load(pick) {
     if (!loaded.has(pick.id)) {
@@ -521,6 +533,7 @@ void main() {
         const src = capSource(await (await fetch('live/' + pick.id + '.glsl')).text());
         if (SLOW) await new Promise(r => setTimeout(r, SLOW));   // (?slow=ms: a slow compile, to test the wait)
         const [prog, tex] = await Promise.all([program(HEAD + common + src + MAIN), gradient(pick.id)]);
+        warm(prog);
         return { pick, prog, tex, maps: mapsOf(src), uni: uniforms(prog, ['uGrad', 'uAA', 'uView', 'uRes', 'uJitter', 'uRot', 'uLake', 'uIterCap']) };
       })());
     }
@@ -534,7 +547,7 @@ void main() {
 
   // (starting: a begin is waiting for its fractal; frames meanwhile mustn't start more. They had,
   // one a frame, each the next along, compiling several at once: black for ages between fractals.)
-  let starting = false, beganAt = 0, queued = null, begun = false;
+  let starting = false, beganAt = 0, fullAt = 0, queued = null, begun = false;   // (fullAt: when it had faded in)
   // The next fractal's compiled while this one rests (or is paused), the view still: a compile
   // takes 0.2-4 s, and the browser's GPU stalls meanwhile (frames of up to half a second here),
   // so compiling as each one began made its start sluggish (Dan). (One not ready by the end is
@@ -588,7 +601,7 @@ void main() {
     starting = false;
     clearTimeout(waitT);
     if (queued !== null) { const q = queued; queued = null; begin(q); return; }
-    cur = next; beganAt = performance.now() / 1000; refCap = 1e9; proved = false; cheapNext = false;
+    cur = next; beganAt = performance.now() / 1000; fullAt = 0; looking = false; refCap = 1e9; proved = false; cheapNext = false;
     if (PIN_STEP === null) { step = startStep(pick); ceiling = 99; frameTimes = []; }
     showName(pick);
     // The whole 2k to start with, then in until fp32 runs out (its depth past the 2k).
@@ -639,13 +652,49 @@ void main() {
   // its course bends gently rather than doubling back. Contrast alone liked the edge of a big
   // flat region, or a lone line in a blank space (Dan), and only saw this depth, so the best few
   // (and straight on) are each looked at deeper (lookAhead) before it picks.
+  // Read back without waiting: into a pixel buffer, picked up once a fence says the GPU's done
+  // (pollReads, each frame). readPixels straight into memory had stalled the page 150-250 ms at
+  // every look on Dan's phone (every 3 s), waiting for the draws before it. A read whose fractal
+  // has changed meanwhile is dropped.
+  const reads = [];
+  function readAsync(fb, w, h, dst, done) {
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buf);
+    gl.bufferData(gl.PIXEL_PACK_BUFFER, dst.byteLength, gl.STREAM_READ);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, 0);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    reads.push({ buf, dst, done, of: cur, sync: gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0) });
+    gl.flush();
+  }
+  function pollReads() {
+    for (let i = 0; i < reads.length; i++) {
+      const r = reads[i];
+      if (gl.clientWaitSync(r.sync, 0, 0) === gl.TIMEOUT_EXPIRED) continue;
+      reads.splice(i--, 1);
+      gl.deleteSync(r.sync);
+      if (r.of === cur && cur) {
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, r.buf);
+        gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, r.dst);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+      }
+      gl.deleteBuffer(r.buf);
+      if (r.of === cur && cur) r.done();
+    }
+  }
+  let looking = false;
   function look() {
+    if (looking) return;
     const rho = Math.hypot(view.x, view.y) + view.h;
     if (rho > picRho) { picRho = rho; minH = Math.max(minH, floorH(cur.maps, rho, floorPx)); }   // (wandered off the picture: c's step may be coarser there)
     gl.bindFramebuffer(gl.FRAMEBUFFER, probe.fb);
-    drawFractal(PROBE, PROBE, view, 1, 0, 0, true);
-    gl.readPixels(0, 0, PROBE, PROBE, gl.RGBA, gl.UNSIGNED_BYTE, probePx);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    const v = { ...view };   // (the view it looked from: it's moved on by the time the pixels are back)
+    drawFractal(PROBE, PROBE, v, 1, 0, 0, true);
+    looking = true;
+    readAsync(probe.fb, PROBE, PROBE, probePx, () => looked(v));
+  }
+  function looked(view) {
     const L = (x, y) => { const k = (y * PROBE + x) * 4; return 0.3 * probePx[k] + 0.59 * probePx[k + 1] + 0.11 * probePx[k + 2]; };
     const sp = Math.hypot(vel.x, vel.y), ca = Math.cos(view.a), sa = Math.sin(view.a);
     const sv = { x: ca * vel.x + sa * vel.y, y: -sa * vel.x + ca * vel.y };   // (its drift on screen)
@@ -666,22 +715,24 @@ void main() {
       const ox = (c.x / PROBE - 0.5) * view.h * reach, oy = (c.y / PROBE - 0.5) * view.h * reach;
       return { x: view.x + ca * ox - sa * oy, y: view.y + sa * ox + ca * oy };
     };
-    if (STEER_OLD) { target = at(cells[0]); return; }
+    if (STEER_OLD) { target = at(cells[0]); looking = false; return; }
     // The best few, far enough apart to be different places, and straight on.
     const picks = [{ x: PROBE / 2, y: PROBE / 2, r: 0, along: 0, straight: true }];
     for (const c of cells) {
       if (picks.length > LOOK_K) break;
       if (picks.every(p => Math.hypot(p.x - c.x, p.y - c.y) >= 6)) picks.push(c);
     }
-    const deep = lookAhead(picks.map(at));
-    let best = -1, pick = picks[0];
-    picks.forEach((c, i) => {
-      // (Wider since Dan: "if the zoom-in location could vary a bit more": the middle and straight
-      // on were favoured more, 1.2 r² and 1.15, with 0.85-1.15 at random.)
-      const score = deep[i] * (1 - 0.6 * c.r * c.r) * (1 + 0.3 * c.along) * (0.7 + 0.6 * rand());
-      if (score > best) { best = score; pick = c; }
+    lookAhead(picks.map(at), view, deep => {
+      let best = -1, pick = picks[0];
+      picks.forEach((c, i) => {
+        // (Wider since Dan: "if the zoom-in location could vary a bit more": the middle and straight
+        // on were favoured more, 1.2 r² and 1.15, with 0.85-1.15 at random.)
+        const score = deep[i] * (1 - 0.6 * c.r * c.r) * (1 + 0.3 * c.along) * (0.7 + 0.6 * rand());
+        if (score > best) { best = score; pick = c; }
+      });
+      target = at(pick);
+      looking = false;
     });
-    target = at(pick);
   }
   // Each spot drawn LOOK_PX square at each of LOOK_DEEP, all into one small target (each tile's
   // view shifted by its offset, so the port's shader needn't know), and read back at once. Its
@@ -693,7 +744,7 @@ void main() {
   // and one mostly lake (over LAKE_OK of it) is let down gently to nothing at all lake.
   const LAKE_OK = 0.5;
   const shore = land => Math.min(1, land / (1 - LAKE_OK));
-  function lookAhead(spots) {
+  function lookAhead(spots, view, then) {
     const D = LOOK_PX, ca = Math.cos(view.a), sa = Math.sin(view.a);
     gl.bindFramebuffer(gl.FRAMEBUFFER, ahead.fb);
     const u = cur.uni;
@@ -708,8 +759,10 @@ void main() {
       gl.uniform3f(u.uView, p.x - (ca * ox - sa * oy), p.y - (sa * ox + ca * oy), h);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }));
-    gl.readPixels(0, 0, ahead.w, ahead.h, gl.RGBA, gl.UNSIGNED_BYTE, aheadPx);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    readAsync(ahead.fb, ahead.w, ahead.h, aheadPx, () => then(scoreAhead(spots)));
+  }
+  function scoreAhead(spots) {
+    const D = LOOK_PX;
     const W = ahead.w, L = (x, y) => { const k = (y * W + x) * 4; return 0.3 * aheadPx[k] + 0.59 * aheadPx[k + 1] + 0.11 * aheadPx[k + 2]; };
     return spots.map((p, i) => {
       let g = 1;
@@ -811,8 +864,20 @@ void main() {
   try { const v = parseFloat(localStorage.getItem(HEAVY_KEY)); if (v > 0) heavyCost = Math.max(HEAVY_MIN, v); } catch (e) {}
   const isCheap = pick => costOf(pick) <= CHEAP_COST;
   const fits = pick => iterCap < 1 || (costOf(pick) < heavyCost && costOf(pick) <= provenCost * PROVE_GROW && (!cheapNext || isCheap(pick)));
+  // And one that's settled coarser than SHARP_MIN samples a CSS pixel here (Dan's phone drew the
+  // heaviest at 0.4-0.65, blocky at any depth) is noted like a too-heavy one, for next time: it
+  // carries on, but from then on it and any as heavy go by, so a phone keeps to ones it draws sharp.
+  const SHARP_MIN = 0.65;
   function prove(now) {
-    if (proved || !cur || iterCap < 1 || step === 0 || now - beganAt < FIT_WINDOW) return;
+    if (proved || !cur || iterCap < 1 || now - fullAt < FIT_WINDOW) return;
+    if (!chosen && !isCheap(cur.pick) && steps()[step][0] < SHARP_MIN - 1e-6) {
+      proved = true;
+      heavyCost = Math.max(HEAVY_MIN, Math.min(heavyCost, costOf(cur.pick)));
+      try { localStorage.setItem(HEAVY_KEY, String(heavyCost)); } catch (e) {}
+      console.info('live: ' + cur.pick.id + ' only ' + steps()[step][0] + ' samples a pixel here; passing over ' + order.filter(p => !fits(p)).length + ' of ' + order.length + ' from now on');
+      return;
+    }
+    if (step === 0) return;
     proved = true;
     if (costOf(cur.pick) <= provenCost) return;
     provenCost = costOf(cur.pick);
@@ -828,7 +893,7 @@ void main() {
     return true;
   }
   function tooHeavy(med, now) {
-    if (!cur || chosen || iterCap < 1 || step !== 0 || med <= 1 / FIT_FPS || now - beganAt > FIT_WINDOW) return false;
+    if (!cur || chosen || iterCap < 1 || step !== 0 || med <= 1 / FIT_FPS || now - fullAt > FIT_WINDOW) return false;
     heavyCost = Math.max(HEAVY_MIN, Math.min(heavyCost, costOf(cur.pick)));
     try { localStorage.setItem(HEAVY_KEY, String(heavyCost)); } catch (e) {}
     console.info('live: ' + cur.pick.id + ' too heavy here (' + Math.round(1 / med) + ' fps at the lowest step); passing over ' + order.filter(p => !fits(p)).length + ' of ' + order.length);
@@ -847,7 +912,8 @@ void main() {
     try { localStorage.setItem(GPU_KEY, String(Math.round(gpuRate))); } catch (e) {}
   }
   function adapt(dt, now) {
-    if (refining || leaving) { frameTimes = []; return; }   // (slow frames are fine while still; and on the way out, it's going anyway)
+    if (refining || leaving || fade < 1) { frameTimes = []; return; }   // (nor fading in: its first frames carry the compile's end, Dan's phone)
+    if (!fullAt) fullAt = now;   // (slow frames are fine while still; and on the way out, it's going anyway)
     frameTimes.push(dt);
     // Every 30 frames, or every second once there are a few (slow hardware shouldn't wait long).
     const span = frameTimes.reduce((a, b) => a + b, 0);
@@ -1324,11 +1390,13 @@ void main() {
           settleAt = null; holdUntil = now + (restWaiting ? (endRest ? END_HARD : REST_MAX) : REST_HOLD); holdLen = restWaiting ? (endRest ? END_HARD : REST_MAX) : REST_HOLD; movedT = 0; nextRest = restIn();
           steerT = 0; easeFor = REST_RESUME; vel = { x: 0, y: 0 }; target = { x: view.x, y: view.y }; aim = { ...target };
           restEase = 0; restHolding = true; say('sharpening this view'); loadNext();
+          for (const r of reads) r.of = null; looking = false;   // (a look still out would steer from where it was)
         }
       }
       const ease = smooth(0, easeFor, steerT) * (0.25 + 0.75 * smooth(minH, minH * 6, view.h)) * restEase;
       view.h = view.h < minH ? Math.min(minH, view.h * Math.pow(2, ZOOM_RATE * dt))   // (back out, if look() raised the floor)
         : Math.max(minH, view.h * Math.pow(2, -ZOOM_RATE * ease * dt));
+      pollReads();
       if (now - lastLook > RETARGET) { lastLook = now; look(); }
       // The aim glides to the target, and a critically damped spring follows the aim, so the
       // drift's speed and direction both change smoothly (no kinks when the target moves).
@@ -1531,7 +1599,7 @@ void main() {
       return iterCap;
     },
     togglePause() { paused = !paused; if (paused) loadNext(); restHolding = false; restWaiting = false; endRest = false; if (ended) { ended = false; leaving = false; fadeDir = 1; } if (!paused) { steerT = 0; easeFor = 1.2; holdUntil = -1e9; settleAt = null; movedT = 0; } return paused; },
-    state: () => ({ iterCap, heavyCost, gpuRate, fitting: order.filter(fits).length, of: order.length, endRest, ended, restWhy, restRate, rest: restHolding ? (restWaiting ? 'settling' : 'ending') : '', restFor: restHolding ? +(performance.now() / 1000 - restAt).toFixed(1) : 0, fade, leaving, step, scale: steps()[step][0], still, refining, refN, refMix, bands, bandMs, frameInt, refDuty, refScale: refScaleNow(), acc: acc && acc.w + "x" + acc.h, frames, h: view.h, a: view.a, minH, refAng, refAngGo, refCap, refA: refView ? refView.a : null, picRho, edgeMiss: { ...edgeMiss }, moonFresh, rateKnown }),
+    state: () => ({ iterCap, heavyCost, gpuRate, fitting: order.filter(fits).length, of: order.length, endRest, ended, restWhy, restRate, rest: restHolding ? (restWaiting ? 'settling' : 'ending') : '', restFor: restHolding ? +(performance.now() / 1000 - restAt).toFixed(1) : 0, fade, leaving, step, scale: steps()[step][0], still, refining, refN, refMix, bands, bandMs, frameInt, refDuty, refScale: refScaleNow(), acc: acc && acc.w + "x" + acc.h, frames, h: view.h, a: view.a, x: view.x, y: view.y, looking, minH, refAng, refAngGo, refCap, refA: refView ? refView.a : null, picRho, edgeMiss: { ...edgeMiss }, moonFresh, rateKnown }),
   };
 
   // The GPU lost (a draw that ran too long gets the GPU reset, Chrome showing a white canvas with a
