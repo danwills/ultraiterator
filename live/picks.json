@@ -3,7 +3,7 @@
   "id": "626074bffdaf",
   "name": "jovaNuliaTwo_dotdotdot_lobstarr_anysecondnow_pillar",
   "depth": 154,
-  "rows": 8,
+  "rows": 19,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 9500
@@ -12,7 +12,7 @@
   "id": "74b1300d41b6",
   "name": "halleyNovaBrain_drain_realismap_eaduup_paste_mfield_labori_byaloo",
   "depth": 100,
-  "rows": 24,
+  "rows": 8,
   "aa": 1,
   "aspect": 1.0,
   "glsl": 38681
@@ -21,7 +21,7 @@
   "id": "35d21c6faa34",
   "name": "novaI_mfields_edgeOfTheReal_swish_smarf_hurf_tet_downCross_chromosome_upsuck_suchANiceWorm_td_flick",
   "depth": 80,
-  "rows": 20,
+  "rows": 53,
   "aa": 1,
   "aspect": 1.0,
   "glsl": 9121
@@ -30,7 +30,7 @@
   "id": "053cc2345be0",
   "name": "novaMandCorner",
   "depth": 366,
-  "rows": 19,
+  "rows": 18,
   "aa": 1,
   "aspect": 1.0,
   "glsl": 7769
@@ -39,7 +39,7 @@
   "id": "68901cc33728",
   "name": "mandField_dotdotdot_submapA",
   "depth": 1024,
-  "rows": 18,
+  "rows": 3,
   "aa": 1,
   "aspect": 1.0,
   "glsl": 2079
@@ -48,7 +48,7 @@
   "id": "0d3b4e4da602",
   "name": "novaRamp_betterBailout_top_map",
   "depth": 567,
-  "rows": 16,
+  "rows": 23,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 26413
@@ -57,7 +57,7 @@
   "id": "4a9fdb346f2e",
   "name": "novaRamp_rug_runnr_bilge",
   "depth": 104,
-  "rows": 5,
+  "rows": 30,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 26313
@@ -66,7 +66,7 @@
   "id": "a0a467757590",
   "name": "ultraPhoenix_leftover_barnacle_encumberance_plaindetail_spiloenor",
   "depth": 58,
-  "rows": 15,
+  "rows": 6,
   "aa": 1,
   "aspect": 1.0,
   "glsl": 12565
@@ -75,7 +75,7 @@
   "id": "47488c79c35e",
   "name": "hotColdNova_blade_lifter_mount_struck",
   "depth": 122,
-  "rows": 27,
+  "rows": 6,
   "aa": 1,
   "aspect": 1.0,
   "glsl": 12151
@@ -84,7 +84,7 @@
   "id": "09528f39477a",
   "name": "halleyPizza_torque_psine_ringa_hupital_quipitate_crund",
   "depth": 1024,
-  "rows": 8,
+  "rows": 67,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 11159
@@ -102,7 +102,7 @@
   "id": "0bd7dc1150a6",
   "name": "novaRamp",
   "depth": 790,
-  "rows": 20,
+  "rows": 44,
   "aa": 1,
   "aspect": 1.0,
   "glsl": 20585
@@ -111,7 +111,7 @@
   "id": "106f671ab53d",
   "name": "alanTIsVeryHelpful_dotdotdot_terminal_edge_stonk_let_tennar_quont_slimap",
   "depth": 148,
-  "rows": 10,
+  "rows": 2,
   "aa": 1,
   "aspect": 1.0,
   "glsl": 13184
@@ -120,7 +120,7 @@
   "id": "1475574ee442",
   "name": "halleyNova_corpuscle_unctuous_abode",
   "depth": 1024,
-  "rows": 5,
+  "rows": 4,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 13753
@@ -129,7 +129,7 @@
   "id": "2477b9db4efd",
   "name": "shardMandLight_dotdotdot_debris_pollen_skemine_roggeh_grannad_itsNotEnough_fakeinz_strange",
   "depth": 45,
-  "rows": 13,
+  "rows": 4,
   "aa": 1,
   "aspect": 1.0,
   "glsl": 15032
@@ -147,7 +147,7 @@
   "id": "32e79257b1d6",
   "name": "novaRamp_dotdotdot_torron_stripe_sub_spire_sioehl_crossout_crkle_dotdarkeye_glint_ofOrbits_suckered",
   "depth": 104,
-  "rows": 4,
+  "rows": 31,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 12072
@@ -156,7 +156,7 @@
   "id": "365a9984c63c",
   "name": "mandField_2b_cuberoot_niceweird_side_sinkGlint_kerSplit_3blob_5map_detail_morebulbs_elephant_wave",
   "depth": 46,
-  "rows": 2,
+  "rows": 3,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 1980
@@ -165,7 +165,7 @@
   "id": "394e5399a734",
   "name": "novaRamp_rug",
   "depth": 195,
-  "rows": 20,
+  "rows": 46,
   "aa": 1,
   "aspect": 1.0,
   "glsl": 22380
@@ -174,7 +174,7 @@
   "id": "407b8e9810a2",
   "name": "halleyPizza_torque_psine_ringa_slip_pair",
   "depth": 1024,
-  "rows": 6,
+  "rows": 71,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 11249
@@ -183,7 +183,7 @@
   "id": "44ba7c63e18b",
   "name": "novaI_mfields_edgeOfTheReal_swish_smarf_hurf_tet_downCross_chromosome_upsuck_suchANiceWorm_td",
   "depth": 622,
-  "rows": 5,
+  "rows": 32,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 11566
@@ -192,7 +192,7 @@
   "id": "46ff6ffe051a",
   "name": "novaRamp_betterBailout_bit_slug_slide_cauli_bidds_cuts",
   "depth": 167,
-  "rows": 16,
+  "rows": 64,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 7358
@@ -201,7 +201,7 @@
   "id": "4e7c12207c00",
   "name": "halleyDetailTwoPointNine_valueImage_halleyImage_goda_quorbhe_pohg_ahr_gahrsp_everyNow_andThen",
   "depth": 170,
-  "rows": 4,
+  "rows": 8,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 26724
@@ -210,7 +210,7 @@
   "id": "4f999898be95",
   "name": "mandField_dotdotdot_submapA_sunny",
   "depth": 429,
-  "rows": 10,
+  "rows": 3,
   "aa": 1,
   "aspect": 1.0,
   "glsl": 2085
@@ -219,7 +219,7 @@
   "id": "54d23f53740f",
   "name": "novaI_mfields_edgeOfTheReal_swish_smarf_hurf_tet_downCross_chromosome_upsuck_suchANiceWorm",
   "depth": 1024,
-  "rows": 8,
+  "rows": 29,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 11561
@@ -237,7 +237,7 @@
   "id": "56e2b6247f96",
   "name": "halleyPizza_torque_psine_ringa_hupital_quipitate_crund_niffits",
   "depth": 1024,
-  "rows": 8,
+  "rows": 67,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 11239
@@ -255,7 +255,7 @@
   "id": "639b0e44d484",
   "name": "shardMandLight_dotdotdot_debris_pollen_skemine_roggeh_grannad_itsNotEnough_properMap",
   "depth": 611,
-  "rows": 13,
+  "rows": 4,
   "aa": 1,
   "aspect": 1.0,
   "glsl": 15008
@@ -264,10 +264,11 @@
   "id": "6bd31d1593eb",
   "name": "halleyPizza_torque_psine_ringa_slip_bulbs_newtonia",
   "depth": 1024,
-  "rows": 8,
+  "rows": 74,
   "aa": 2,
   "aspect": 1.0,
-  "glsl": 11009
+  "glsl": 11009,
+  "floor": 4
  },
  {
   "id": "6c1ad12ce402",
@@ -282,7 +283,7 @@
   "id": "6fd0c9f50b9d",
   "name": "negPhoenixInclusions_spade_skade_themiddle_proenmn_0uter_soqckq_2TimesATenthUp",
   "depth": 53,
-  "rows": 2,
+  "rows": 3,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 6135
@@ -300,7 +301,7 @@
   "id": "75131a5ecd5e",
   "name": "shardMandLight_dotdotdot_debris_pollen_skemine_roggeh_grannad_itsNotEnough",
   "depth": 184,
-  "rows": 13,
+  "rows": 4,
   "aa": 1,
   "aspect": 1.0,
   "glsl": 15008
@@ -309,7 +310,7 @@
   "id": "7b26b6bb26e3",
   "name": "halleyDetailTwoPointNine_valueImage_halleyImage_goda_poynt_though_aREgear_addminus",
   "depth": 1024,
-  "rows": 8,
+  "rows": 19,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 14285
@@ -318,7 +319,7 @@
   "id": "7ee65f0e291f",
   "name": "halleyNova_corpuscle_unctuous_abode_knifespoons",
   "depth": 564,
-  "rows": 5,
+  "rows": 4,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 13753
@@ -327,7 +328,7 @@
   "id": "8018986de612",
   "name": "jovaNuliaTwo_jellies_spanch_pwanke_eloaf_vindale_mandelbubble_purse_deelaye_wicque",
   "depth": 1024,
-  "rows": 7,
+  "rows": 12,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 9565
@@ -336,7 +337,7 @@
   "id": "8adf7d620fe3",
   "name": "novaRamp_dotdotdot_torron_stripe_sub_spire_side",
   "depth": 46,
-  "rows": 5,
+  "rows": 26,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 11919
@@ -354,7 +355,7 @@
   "id": "91d83387ebd1",
   "name": "mandField_2b_cuberoot_niceweird_side_sinkGlint_kerSplit_3blob_5map_detail_morebulbs",
   "depth": 796,
-  "rows": 11,
+  "rows": 3,
   "aa": 1,
   "aspect": 1.0,
   "glsl": 1975
@@ -363,7 +364,7 @@
   "id": "91f8945ee6da",
   "name": "novaRamp_dotdotdot_nexus_dredge_topic",
   "depth": 80,
-  "rows": 4,
+  "rows": 21,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 15993
@@ -372,7 +373,7 @@
   "id": "93b1f5e56be6",
   "name": "mandField_2b_cuberoot_niceweird_side_nuggets",
   "depth": 1024,
-  "rows": 11,
+  "rows": 3,
   "aa": 1,
   "aspect": 1.0,
   "glsl": 1973
@@ -381,7 +382,7 @@
   "id": "9c57625942d7",
   "name": "CopyOfShardMandLight_pep_to_abysmal_abusiness_tiger_plain_pt_skeeter_gzlize_ramp",
   "depth": 129,
-  "rows": 4,
+  "rows": 7,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 12478
@@ -390,7 +391,7 @@
   "id": "9eb51a02495a",
   "name": "mandField_dotdotdot_submapA_sunny_solidblip",
   "depth": 99,
-  "rows": 10,
+  "rows": 3,
   "aa": 1,
   "aspect": 1.0,
   "glsl": 2083
@@ -408,7 +409,7 @@
   "id": "a2587b2d651a",
   "name": "shardMandLight_dotdotdot_kerchief_pampyuze_zee_thinker_thaw_potatoOnGrass",
   "depth": 41,
-  "rows": 11,
+  "rows": 3,
   "aa": 1,
   "aspect": 1.0,
   "glsl": 13328
@@ -417,7 +418,7 @@
   "id": "a3e32773b725",
   "name": "mandField_2b_cuberoot_niceweird_side_nuggets_suggestion_subnuggetA_trilayer_tune_glance_goldenbestfriend",
   "depth": 1024,
-  "rows": 10,
+  "rows": 3,
   "aa": 1,
   "aspect": 1.0,
   "glsl": 2079
@@ -426,7 +427,7 @@
   "id": "a56810cf5642",
   "name": "novaRamp_dotdotdot_yare_wire_skipper_moveAround_boyPatrol_leaky_coreCentral_upper",
   "depth": 201,
-  "rows": 4,
+  "rows": 13,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 17148
@@ -435,7 +436,7 @@
   "id": "ab9342f14c5a",
   "name": "halleyDetailTwoPointNine_valueImage_halleyImage_goda_quorbhe_helios",
   "depth": 1024,
-  "rows": 19,
+  "rows": 18,
   "aa": 1,
   "aspect": 1.0,
   "glsl": 15215
@@ -444,7 +445,7 @@
   "id": "ad1aa29eb64c",
   "name": "halleyPizza_torque_psine_ringa_slip_pair_loqued",
   "depth": 1024,
-  "rows": 8,
+  "rows": 67,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 11249
@@ -453,7 +454,7 @@
   "id": "b3663afb0353",
   "name": "halleyPizza_torque_psine_ringa_slip_pair_loquea",
   "depth": 1024,
-  "rows": 8,
+  "rows": 74,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 11249
@@ -462,7 +463,7 @@
   "id": "b52175aceb17",
   "name": "novaRamp_betterBailout_top_map_darkspot_mabb",
   "depth": 463,
-  "rows": 16,
+  "rows": 27,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 18569
@@ -471,7 +472,7 @@
   "id": "bc0373c1ba8d",
   "name": "halleyPizza_torque_psine_ringa_hupital_quipitate",
   "depth": 1024,
-  "rows": 8,
+  "rows": 55,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 11234
@@ -480,7 +481,7 @@
   "id": "cedb747c2bbb",
   "name": "CopyOfNovaRamp_betterBailout_point_mess_ropelight_othermap_web_elphe_slipper_cyworld_eighten_fourten",
   "depth": 117,
-  "rows": 5,
+  "rows": 22,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 19849
@@ -489,7 +490,7 @@
   "id": "d9f127aedf44",
   "name": "halleyPizza",
   "depth": 1024,
-  "rows": 9,
+  "rows": 112,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 9208
@@ -498,7 +499,7 @@
   "id": "dfa8ec7b5c51",
   "name": "alanTIsVeryHelpful_dotdotdot_hshbq2_d2_dmap",
   "depth": 228,
-  "rows": 4,
+  "rows": 2,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 13152
@@ -507,7 +508,7 @@
   "id": "e079f98ed3c4",
   "name": "novaRamp_betterBailout_point_mess_ropelight_othermap_web_elphe_slipper_cyworld_eighten_twoten_ens_shdderag_mush_spike_sausage",
   "depth": 314,
-  "rows": 8,
+  "rows": 22,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 19875
@@ -516,7 +517,7 @@
   "id": "f52a35f3393d",
   "name": "mandField_2b_cuberoot_niceweird_side_sinkGlint_kerSplit_3blob_5map_detail_hotbulbs",
   "depth": 341,
-  "rows": 11,
+  "rows": 3,
   "aa": 1,
   "aspect": 1.0,
   "glsl": 1978
@@ -525,7 +526,7 @@
   "id": "f587e664ecd6",
   "name": "novaRamp_rug_runnr_bilge_boat",
   "depth": 91,
-  "rows": 8,
+  "rows": 26,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 26257
@@ -534,7 +535,7 @@
   "id": "f6703f258b7c",
   "name": "jovaNuliaTwo_jellies_spanch_pwanke_eloaf_vindale_mandelbubble_purse_deelaye_wicque_pilone",
   "depth": 1024,
-  "rows": 7,
+  "rows": 10,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 9565
@@ -543,7 +544,7 @@
   "id": "fc90d5fba33c",
   "name": "novaRamp_dotdotdot_nexus_dredge",
   "depth": 406,
-  "rows": 8,
+  "rows": 19,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 15961
@@ -552,7 +553,7 @@
   "id": "fefd3b3af677",
   "name": "mandField_2b_cuberoot_niceweird_side_nuggets_suggestion",
   "depth": 63,
-  "rows": 11,
+  "rows": 3,
   "aa": 1,
   "aspect": 1.0,
   "glsl": 1976
@@ -561,7 +562,7 @@
   "id": "ff477f0ad852",
   "name": "reButteredPhoenix_dee_twee_agga_doot_poot_ponna_pod_drock_tor",
   "depth": 145,
-  "rows": 5,
+  "rows": 4,
   "aa": 2,
   "aspect": 1.0,
   "glsl": 13339

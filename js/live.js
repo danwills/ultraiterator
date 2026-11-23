@@ -357,6 +357,8 @@ void main() {
     return out;
   };
   // The least height for a view reaching rho (picture heights) from the 2k's middle.
+  // (picks.json's floor: a pick that goes soft before that, stopped that many times shallower:
+  // 6bd31d1593eb, 4, from Dan's phone.)
   function floorH(maps, rho, screenPx) {
     let need = 0;
     for (const m of maps) if (m.r > 0) {
@@ -613,7 +615,7 @@ void main() {
     // (The view stays near the picture, so its half-diagonal and a little more; look() raises it if
     // the view wanders further.)
     floorPx = screenPx; picRho = 0.6 * Math.hypot(pick.aspect || 1, 1);
-    minH = Math.max(startH / 4096, floorH(next.maps, picRho, screenPx));
+    minH = Math.max(startH / 4096, floorH(next.maps, picRho, screenPx) * (pick.floor || 1));
     view = { x: 0, y: 0, h: startH, a: 0 };
     target = { x: 0, y: 0 }; aim = { x: 0, y: 0 }; vel = { x: 0, y: 0 };
     lastLook = performance.now() / 1000 - RETARGET + 1.0; steerT = 0; easeFor = 4; turnSteer = 0;
@@ -687,7 +689,7 @@ void main() {
   function look() {
     if (looking) return;
     const rho = Math.hypot(view.x, view.y) + view.h;
-    if (rho > picRho) { picRho = rho; minH = Math.max(minH, floorH(cur.maps, rho, floorPx)); }   // (wandered off the picture: c's step may be coarser there)
+    if (rho > picRho) { picRho = rho; minH = Math.max(minH, floorH(cur.maps, rho, floorPx) * (cur.pick.floor || 1)); }   // (wandered off the picture: c's step may be coarser there)
     gl.bindFramebuffer(gl.FRAMEBUFFER, probe.fb);
     const v = { ...view };   // (the view it looked from: it's moved on by the time the pixels are back)
     drawFractal(PROBE, PROBE, v, 1, 0, 0, true);
@@ -846,16 +848,18 @@ void main() {
   // one and any as heavy (by picks.json's rows) go by. (Predicting from gpuRate, measured by frame
   // times, had a desktop passing over 51 of 63.) Never one picked from the gallery, and not while
   // the iterations pearl's capping them. So a slow phone's order skips some of everyone else's.
-  const FIT_FPS = 12, FIT_WINDOW = 15, HEAVY_KEY = 'ultraiterator-too-heavy';
+  const FIT_FPS = 12, FIT_WINDOW = 15, HEAVY_KEY = 'ultraiterator-too-heavy-2';
   let heavyCost = Infinity, chosen = false;   // (the lightest cost seen too heavy; chosen: from the gallery)
   const costOf = pick => workOf(1, pick.aa || 1, pick);
+  // (-2: picks.json's rows timed again, 2026-11-23, from this page's own shaders at their 2k on a
+  // GTX 960, the median kept: the app's figures had a3e32773b725 among the cheapest, ~25x off.)
   // And it works up to the heavy ones (Dan, 2026-11-22: a phone got "a bit slow" on a heavy one,
   // and should start on cheaper ones, and try a cheap one before giving up). The costs go from 1.2
   // to 64 (picks.json's rows), the cheapest third at most CHEAP_COST. A new browser's first is one
   // of those, and the order then takes only ones up to PROVE_GROW times the heaviest that's gone
   // well here (FIT_WINDOW s without being at the ladder's lowest step), kept in this browser.
   // Too slow even at the lowest step, it moves to a cheap one, and only gives up on a cheap one.
-  const CHEAP_COST = 3.5, PROVE_GROW = 4, PROVEN_KEY = 'ultraiterator-proven';
+  const CHEAP_COST = 3.5, PROVE_GROW = 4, PROVEN_KEY = 'ultraiterator-proven-2';
   let provenCost = CHEAP_COST, proved = false, cheapNext = false;
   try { const v = parseFloat(localStorage.getItem(PROVEN_KEY)); if (v > 0) provenCost = Math.max(CHEAP_COST, v); } catch (e) {}
   // The cheap ones always fit: one of them too heavy gives up instead (a phone's heavy mark had
@@ -1580,6 +1584,20 @@ void main() {
     // Play: off at once (no wait after a touch), up to speed in a second or so.
     current: () => (cur ? cur.pick.id : order[at] ? order[at].id : null),   // (the fullscreen pearl's: js/theatre.js)
     capSource,   // (for tests)
+    // (For tests: ms a frame drawing this one at v, w x h, the GPU waited for; tools' cost timing.)
+    timeView(v, w, h, n = 3) {
+      if (!cur) return null;
+      const t = target2d(w, h, gl.RGBA8);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, t.fb);
+      const px = new Uint8Array(4), done = () => gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);   // (finish alone may not wait)
+      drawFractal(w, h, v, 1, 0, 0, false); done();
+      const t0 = performance.now();
+      for (let i = 0; i < n; i++) drawFractal(w, h, v, 1, 0, 0, false);
+      done();
+      const ms = (performance.now() - t0) / n;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null); t.free();
+      return ms;
+    },
     // (For tests: the view put there, paused. h in picture heights, or in floors with floors: n.)
     place(v) { if (v.floors) v = { ...v, h: minH * v.floors }; Object.assign(view, v); paused = true; restHolding = false; restWaiting = false; frames = 0; still = 0; prevView = null; stopRefine(); refMix = 0; return { ...view, minH }; },
     // The iterations pearl: down a step (up, with Shift or a right click), round again past the
