@@ -795,7 +795,6 @@ void main() {
   // the iterations pearl's capping them. So a slow phone's order skips some of everyone else's.
   const FIT_FPS = 12, FIT_WINDOW = 15, HEAVY_KEY = 'ultraiterator-too-heavy';
   let heavyCost = Infinity, chosen = false;   // (the lightest cost seen too heavy; chosen: from the gallery)
-  try { const v = parseFloat(localStorage.getItem(HEAVY_KEY)); if (v > 0) heavyCost = v; } catch (e) {}
   const costOf = pick => workOf(1, pick.aa || 1, pick);
   // And it works up to the heavy ones (Dan, 2026-11-22: a phone got "a bit slow" on a heavy one,
   // and should start on cheaper ones, and try a cheap one before giving up). The costs go from 1.2
@@ -806,6 +805,10 @@ void main() {
   const CHEAP_COST = 3.5, PROVE_GROW = 4, PROVEN_KEY = 'ultraiterator-proven';
   let provenCost = CHEAP_COST, proved = false, cheapNext = false;
   try { const v = parseFloat(localStorage.getItem(PROVEN_KEY)); if (v > 0) provenCost = Math.max(CHEAP_COST, v); } catch (e) {}
+  // The cheap ones always fit: one of them too heavy gives up instead (a phone's heavy mark had
+  // come down to the cheapest, so none fit and it went round them all, too heavy, for good).
+  const HEAVY_MIN = CHEAP_COST * 1.0001;
+  try { const v = parseFloat(localStorage.getItem(HEAVY_KEY)); if (v > 0) heavyCost = Math.max(HEAVY_MIN, v); } catch (e) {}
   const isCheap = pick => costOf(pick) <= CHEAP_COST;
   const fits = pick => iterCap < 1 || (costOf(pick) < heavyCost && costOf(pick) <= provenCost * PROVE_GROW && (!cheapNext || isCheap(pick)));
   function prove(now) {
@@ -826,7 +829,7 @@ void main() {
   }
   function tooHeavy(med, now) {
     if (!cur || chosen || iterCap < 1 || step !== 0 || med <= 1 / FIT_FPS || now - beganAt > FIT_WINDOW) return false;
-    heavyCost = Math.min(heavyCost, costOf(cur.pick));
+    heavyCost = Math.max(HEAVY_MIN, Math.min(heavyCost, costOf(cur.pick)));
     try { localStorage.setItem(HEAVY_KEY, String(heavyCost)); } catch (e) {}
     console.info('live: ' + cur.pick.id + ' too heavy here (' + Math.round(1 / med) + ' fps at the lowest step); passing over ' + order.filter(p => !fits(p)).length + ' of ' + order.length);
     return true;
@@ -844,7 +847,7 @@ void main() {
     try { localStorage.setItem(GPU_KEY, String(Math.round(gpuRate))); } catch (e) {}
   }
   function adapt(dt, now) {
-    if (refining) { frameTimes = []; return; }   // (slow frames are fine while still)
+    if (refining || leaving) { frameTimes = []; return; }   // (slow frames are fine while still; and on the way out, it's going anyway)
     frameTimes.push(dt);
     // Every 30 frames, or every second once there are a few (slow hardware shouldn't wait long).
     const span = frameTimes.reduce((a, b) => a + b, 0);
@@ -854,7 +857,7 @@ void main() {
     baseFrame = med;   // (refinement's frame-rate watch compares against this)
     noteRate(med);
     frameTimes = [];
-    if (tooHeavy(med, now)) { cheapNext = true; UILive.next(); return; }
+    if (tooHeavy(med, now)) { if (isCheap(cur.pick)) giveUp(); else { cheapNext = true; UILive.next(); } return; }
     if (med > TOO_SLOW && step === 0) { if (swapToCheap()) UILive.next(); else giveUp(); return; }
     prove(now);
     if (med > TOO_SLOW * 2) { step = 0; ceiling = 0; ceilingUntil = now + 600; return; }   // hopeless: straight to the bottom
@@ -1162,7 +1165,7 @@ void main() {
 
   // Too slow even at its lowest: show the fractal's own render, sharp, instead.
   function giveUp() {
-    cur = null; if (window.UIGemsBackdrop) window.UIGemsBackdrop(null);
+    cur = null;
     document.body.classList.add('no-live');
     // (the one it's on now: after a lost GPU every pick came here, and the poster stayed on the
     // first one's render whichever was picked, Dan)
@@ -1171,20 +1174,6 @@ void main() {
     const note = document.querySelector('.live-note');
     if (note && order[at]) note.innerHTML = 'One of the fractals, as rendered in Ultra Fractal. (This browser is a bit slow to draw it live.)<br><span id="live-name"></span>';
     if (order[at]) { const n = document.getElementById('live-name'); if (n) n.textContent = order[at].name.replace(/_dotdotdot_/g, ' … ').replace(/_/g, ' '); }
-  }
-
-  // The picture, for js/pearls.js: the gems over it are lit by it and reflect it (Dan: "hang the
-  // expense, although doing it as cheaply as possible would be sweet"). Handed over every BACK_MS
-  // just after it's drawn (its drawing buffer is only good till the page composites), copied on
-  // the GPU there. (Read back through a buffer instead, Chrome took its slow path every time:
-  // 3 ms a read, 130 ms at the 95th percentile, waiting on the queued refinement.)
-  const BACK_MS = 100;
-  let backAt = 0;
-  function shareBackdrop() {
-    const now = performance.now();
-    if (now - backAt < BACK_MS || !window.UIGemsBackdrop) return;
-    backAt = now;
-    window.UIGemsBackdrop(canvas);
   }
 
   function present() {
@@ -1217,7 +1206,6 @@ void main() {
     gl.uniform2f(SU.uHistRot, Math.cos(hv.a), Math.sin(hv.a));
     gl.uniform1i(SU.uSmooth, refTurns ? 1 : 0);
     quadDraw(w, h);
-    shareBackdrop();
   }
 
   // The pause pearl says which it's doing: dim, near the ↻ pearl's black, while it moves (drawing
@@ -1303,7 +1291,7 @@ void main() {
   const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
   // Black till the next one begins (begin sets cur again): the canvas cleared, its poster hidden.
   function blackOut() {
-    cur = null; if (window.UIGemsBackdrop) window.UIGemsBackdrop(null);
+    cur = null;
     if (poster) poster.classList.add('gone');
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, canvas.width, canvas.height);

@@ -52,7 +52,6 @@ body.no-live .hero-controls { display: none; }
 /* Until it's on Play for real. */
 .hero-text .stage-row { margin: .8rem 0 .1rem; }
 .hero-text .stage { font-size: .85rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #142029; margin: 0; }
-body:not(.gems) .hero-text .stage { background: #93b4c9; }
 .hero-text .soon { margin-left: .6rem; font-size: .85rem; letter-spacing: .02em; color: #e6dccb; text-shadow: 0 1px 8px rgba(0,0,0,.9); white-space: nowrap; }
 .hero-text .tagline { margin: .7rem 0 0; font-size: clamp(1.05rem, 3vw, 1.35rem); color: #f4ead9; text-shadow: 0 1px 10px rgba(0,0,0,.9); max-width: 34rem; }
 .hero-controls { position: absolute; right: 1rem; top: 1rem; display: flex; gap: .7rem; z-index: 6; }
@@ -108,8 +107,15 @@ body:not(.gems) .badge { border-radius: 50%; background: radial-gradient(circle 
 .pebble-link.small { padding: .55rem 1.15rem; font-size: .95rem; }
 .pebble-link.dark { color: #efe6d8; }
 .pebble-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 6px; border-radius: 40%; }
-body:not(.gems) .pebble-link { background: #8d877f; border-radius: 40%; }
-body:not(.gems) .pebble-link.dark { background: #2c2a2e; }
+/* Without the GL (or till it's ready): the stone's own outline (--stone, from js/pearls.js),
+   flat in its look's colour. */
+body:not(.gems) .gem[data-gem="pebble"]::before { content: ""; position: absolute; inset: -16px; z-index: -1; background: oklch(0.67 0.012 90); clip-path: var(--stone, inset(0 round 40%)); }
+body:not(.gems) .gem[data-look="jasper"]::before { background: oklch(0.47 0.12 29); }
+body:not(.gems) .gem[data-look="lapis"]::before { background: oklch(0.40 0.15 263); }
+body:not(.gems) .gem[data-look="basalt"]::before { background: oklch(0.27 0.008 216); }
+body:not(.gems) .gem[data-look="sandstone"]::before { background: oklch(0.69 0.06 65); }
+body:not(.gems) .gem[data-look="jade"]::before { background: oklch(0.61 0.1 151); }
+body:not(.gems) .gem[data-look="sky"]::before { background: oklch(0.70 0.045 241); }
 .cta { margin-top: 1rem; }
 .email-line { color: var(--muted); }
 .open-app { display: none; color: var(--muted); }

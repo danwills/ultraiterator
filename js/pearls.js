@@ -25,9 +25,6 @@ uniform float uDpr;
 uniform int uCount;
 uniform vec4 uRect[${MAX}];   // middle and half size, px, y down
 uniform vec4 uKind[${MAX}];   // kind (0 pebble, 1 pearl), look, seed, hover 0..1
-uniform sampler2D uBack;     // the live hero's picture, mipmapped (js/live.js shareBackdrop), top row first
-uniform vec4 uBackRect;      // where it is: left, top, width, height, px, y down
-uniform float uBackOn;       // 0..1: whether there is one
 uniform vec4 uMore[${MAX}];   // the state pearl's x: glow, y: countdown left 0..1 (-1 none; under -1, a rest coming, filled -1 - y), z: its call glow
 out vec4 frag;
 
@@ -67,22 +64,10 @@ vec3 voro(vec2 x) {
     return vec3(sqrt(d1), id, sqrt(d2) - sqrt(d1));
 }
 // The night sky the page sits under, reflected.
-// The gem being drawn: its middle and radius (px), and how much the hero's picture is behind it.
-vec2 gC; float gR, gOn;
-vec3 backAt(vec2 px) {
-    vec2 uv = clamp((px - uBackRect.xy) / uBackRect.zw, 0.0, 1.0);
-    // (blurred to about the gem's size: its light, not the picture's grain)
-    float lod = log2(max(gR * 0.8 * float(textureSize(uBack, 0).x) / uBackRect.z, 1.0));
-    return textureLod(uBack, uv, lod).rgb;
-}
-// What a gem reflects: a dim sky, or over the live hero its picture round about (the rim of a
-// round thing shows what's off to that side).
 vec3 env(vec3 n) {
     float up = clamp(-n.y * 0.8 + n.z * 0.3, -1.0, 1.0);
     vec3 top = vec3(0.10, 0.12, 0.22), hor = vec3(0.16, 0.13, 0.15), gnd = vec3(0.03, 0.025, 0.03);
-    vec3 sky = up > 0.0 ? mix(hor, top, up) : mix(hor, gnd, -up);
-    if (gOn > 0.0) sky = mix(sky, backAt(gC + n.xy * gR * 2.4) * 1.15, gOn);
-    return sky;
+    return up > 0.0 ? mix(hor, top, up) : mix(hor, gnd, -up);
 }
 const vec3 L = normalize(vec3(-0.5, -0.65, 0.75));
 
@@ -248,9 +233,6 @@ void main() {
         if (abs(rel.x) > rc.z + marg || abs(rel.y) > rc.w + marg) continue;
         int kind = int(k.x + 0.5), look = int(k.y + 0.5);
         float seed = k.z, hover = k.w;
-        gC = rc.xy; gR = min(rc.z, rc.w);
-        { vec2 bu = (rc.xy - uBackRect.xy) / uBackRect.zw;
-          gOn = uBackOn * step(0.0, bu.x) * step(bu.x, 1.0) * step(0.0, bu.y) * step(bu.y, 1.0); }
         float aa = 1.2 * uDpr;
         float d, sd;
         vec3 nn; vec2 q;
@@ -281,13 +263,6 @@ void main() {
         if (body > 0.0) col = kind == 0 ? pebble(look, q, nn, seed, hover, rel / uDpr, rc.zw / uDpr, uMore[i].w)
             : look == 19 ? mix(pearl(11, q, nn, seed, hover) * 0.95, pearl(10, q, nn, seed, hover) * 1.3, uMore[i].x)
             : pearl(look, q, nn, seed, hover);
-        // Lit by the picture behind, from each side by what's just off that edge: tinted by it
-        // (a little darker over a dark patch), and a soft rim of its colour, as backlit.
-        if (body > 0.0 && gOn > 0.0) {
-            vec3 round_ = backAt(gC + nn.xy * gR * 1.6);
-            col = mix(col, col * (0.7 + 1.5 * round_), 0.7 * gOn);
-            col += round_ * pow(1.0 - nn.z, 1.6) * 0.9 * gOn;
-        }
         // Shadow under, then the stone over it.
         vec4 s = vec4(0.0, 0.0, 0.0, shadow * (1.0 - body));
         vec4 b = vec4(col * body, body);
@@ -399,6 +374,58 @@ void main() {
 in vec2 aPos;
 void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
 
+  // Until the GL's ready (or without it), each pebble's CSS stand-in has its stone's outline:
+  // stoneDist above, here in JS, traced along rays as a clip-path for its ::before (--stone),
+  // flat coloured, no shading or moss (Dan: "at least the same shape"). (fp32's sin differs from
+  // GPU to GPU, so the GL's own outline differs a little from one to another too.)
+  const f32 = Math.fround, fract = x => x - Math.floor(x);
+  const hash = (x, y) => fract(f32(Math.sin(f32(f32(x * 127.1) + f32(y * 311.7)))) * 43758.5453);
+  const vnoise = (x, y) => {
+    const ix = Math.floor(x), iy = Math.floor(y);
+    let fx = x - ix, fy = y - iy;
+    fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
+    const a = hash(ix, iy), b = hash(ix + 1, iy), c = hash(ix, iy + 1), d = hash(ix + 1, iy + 1);
+    return (a + (b - a) * fx) * (1 - fy) + (c + (d - c) * fx) * fy;
+  };
+  function stoneDist(x, y, hx, hy, seed, rocky) {
+    const q1 = hash(seed, 21), q2 = hash(seed, 22), q3 = hash(seed, 23);
+    const ta = (q1 - 0.5) * 0.12, c = Math.cos(ta), s = Math.sin(ta);
+    let rx = c * x + s * y, ry = -s * x + c * y;
+    const xn = Math.max(-1.2, Math.min(1.2, rx / hx));
+    ry -= (q2 - 0.5) * 0.5 * hy * xn * xn;
+    ry /= 1 + (q3 - 0.5) * 0.45 * xn;
+    const mn = Math.min(hx, hy);
+    const ex = 2.4 + 0.5 * hash(seed, 6) + 0.45 * Math.max(0, Math.min(2, hx / hy - 1.5));
+    const r = Math.pow(Math.pow(Math.abs(rx) / hx, ex) + Math.pow(Math.abs(ry) / hy, ex), 1 / ex);
+    const th = Math.atan2(ry / hy, rx / hx), ct = Math.cos(th), st = Math.sin(th);
+    const dirR = Math.hypot(hx * ct, hy * st);
+    let wob = 0.05 * Math.sin(2 * th + 6 * hash(seed, 1)) + 0.04 * Math.sin(3 * th + 6 * hash(seed, 2))
+            + 0.025 * Math.sin(5 * th + 6 * hash(seed, 3));
+    wob += 0.03 * (vnoise(ct * 2.2 + seed * 3.1, st * 2.2 + seed * 3.1) - 0.5) + 0.014 * (vnoise(ct * 6.5 + seed * 1.7, st * 6.5 + seed * 1.7) - 0.5);
+    const k = 1 / Math.max(r, 0.05) / mn;
+    const chip = Math.abs(vnoise(rx * k * 1.3 + seed * 2.3, ry * k * 1.3 + seed * 2.3) - 0.5) * 2;
+    wob += rocky * (0.05 * (vnoise(ct * 9 + seed * 4.1, st * 9 + seed * 4.1) - 0.5) + 0.025 * (vnoise(ct * 23 + seed, st * 23 + seed) - 0.5));
+    const R = 1 + (wob - (0.08 + 0.1 * rocky) * chip + 0.07) * mn / dirR;
+    return (r / R - 1) * R * dirR;
+  }
+  const PAD = 16;   // (the stone reaches a little past its box: its ::before is this much bigger all round)
+  function outlineStone(el) {
+    const hx = el.offsetWidth / 2, hy = el.offsetHeight / 2;
+    if (!hx || !hy) return;
+    const seed = parseFloat(el.dataset.seed || 0.5), rocky = parseFloat(el.dataset.rocky || 0);
+    const pts = [], N = 64, far = 1.6 * Math.max(hx, hy);
+    for (let i = 0; i < N; i++) {
+      const a = (i / N) * 2 * Math.PI, dx = Math.cos(a), dy = Math.sin(a);
+      let lo = 0, hi = far;   // (inside at the middle, outside far off: bisect for the edge)
+      for (let j = 0; j < 22; j++) { const m = (lo + hi) / 2; if (stoneDist(dx * m, dy * m, hx, hy, seed, rocky) < 0) lo = m; else hi = m; }
+      pts.push(`${(dx * lo + hx + PAD).toFixed(1)}px ${(dy * lo + hy + PAD).toFixed(1)}px`);
+    }
+    el.style.setProperty('--stone', `polygon(${pts.join(',')})`);
+  }
+  const stones = [...document.querySelectorAll('.gem[data-gem="pebble"]')];
+  if (window.ResizeObserver) { const ro = new ResizeObserver(es => es.forEach(e => outlineStone(e.target))); stones.forEach(el => ro.observe(el)); }
+  else { const all = () => stones.forEach(outlineStone); all(); addEventListener('resize', all); }
+
   const canvas = document.createElement('canvas');
   canvas.id = 'gems';
   canvas.setAttribute('aria-hidden', 'true');
@@ -431,7 +458,7 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
       console.warn(gl.getShaderInfoLog(fs)); document.body.classList.add('no-gems'); canvas.remove(); return false;
     }
-    for (const n of ['uRes', 'uTime', 'uDpr', 'uCount', 'uRect', 'uKind', 'uMore', 'uBack', 'uBackRect', 'uBackOn']) U[n] = gl.getUniformLocation(prog, n);
+    for (const n of ['uRes', 'uTime', 'uDpr', 'uCount', 'uRect', 'uKind', 'uMore']) U[n] = gl.getUniformLocation(prog, n);
     document.body.classList.add('gems');
     return (ready = true);
   }
@@ -439,24 +466,6 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
   gl.bindBuffer(gl.ARRAY_BUFFER, buf);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
 
-  // The live hero's picture (js/live.js), into a small texture whenever there's a new one.
-  const backTex = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, backTex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
-  for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
-  const liveCanvas = document.getElementById('live');
-  let haveBack = false, backOn = 0;
-  const NO_LIGHT = new URLSearchParams(location.search).has('nolight');   // (?nolight: without, to compare)
-  // (js/live.js calls this just after it draws, while its canvas still has the picture: copied
-  // GPU to GPU here, and mipmapped for backAt's blur. null: none now.)
-  window.UIGemsBackdrop = src => {
-    if (!src || gl.isContextLost()) { haveBack = false; return; }
-    gl.bindTexture(gl.TEXTURE_2D, backTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
-    gl.generateMipmap(gl.TEXTURE_2D);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-    haveBack = true;
-  };
   const hover = new WeakMap();
   const rects = new Float32Array(MAX * 4), kinds = new Float32Array(MAX * 4), more = new Float32Array(MAX * 4);
   let els = [];
@@ -518,15 +527,6 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }`;
     gl.uniform4fv(U.uRect, rects);
     gl.uniform4fv(U.uKind, kinds);
     gl.uniform4fv(U.uMore, more);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, backTex);
-    // (eased, and off while the hero shows its poster instead)
-    const showing = haveBack && !NO_LIGHT && !document.body.classList.contains('waiting') && !document.body.classList.contains('no-live');
-    backOn += ((showing ? 1 : 0) - backOn) * (1 - Math.exp(-dt * 3));
-    const lr = liveCanvas ? liveCanvas.getBoundingClientRect() : null;
-    gl.uniform1i(U.uBack, 0);
-    gl.uniform1f(U.uBackOn, lr && lr.width ? backOn : 0);
-    if (lr) gl.uniform4f(U.uBackRect, (lr.left - cr.left) * dpr, (lr.top - cr.top) * dpr, Math.max(1, lr.width * dpr), Math.max(1, lr.height * dpr));
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
